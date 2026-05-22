@@ -3,7 +3,7 @@
 import fitz  # PyMuPDF - for image extraction from PDF
 from PIL import Image
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.schema import Document
+from langchain_core.documents import Document
 import io
 
 def load_pdf_text(file_path: str) -> list[Document]:

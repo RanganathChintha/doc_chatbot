@@ -4,7 +4,7 @@ import base64
 import io
 from PIL import Image
 from groq import Groq
-from langchain.schema import Document
+from langchain_core.documents import Document
 from config import GROQ_API_KEY, IMAGE_EXTRACTOR_MODEL
 
 # Initialize Groq client for Scout model

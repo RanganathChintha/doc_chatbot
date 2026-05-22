@@ -15,10 +15,10 @@ from rag.rag_chain import get_llm, build_rag_chain
 # STEP 1: Define your input files
 # ─────────────────────────────────────────────
 input_files = [
-    "data/report.pdf",
-    "data/chart.png",
-    "data/sales_data.csv",
-    "data/financials.xlsx",
+    "data/pdf_img.pdf",
+    # "data/ocr.jpg",
+    # "data/breast-cancer.csv",
+    # "data/clothes.jpg",
 ]
 
 all_documents = []

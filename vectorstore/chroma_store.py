@@ -1,7 +1,7 @@
 # vectorstore/chroma_store.py
 
 from langchain_chroma import Chroma
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEndpointEmbeddings
 from config import CHROMA_PERSIST_DIR, CHROMA_COLLECTION_NAME
 

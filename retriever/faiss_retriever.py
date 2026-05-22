@@ -1,7 +1,7 @@
 # retriever/faiss_retriever.py
 
 from langchain_community.vectorstores import FAISS
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEndpointEmbeddings
 from langchain_chroma import Chroma
 from config import TOP_K

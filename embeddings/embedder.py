@@ -1,4 +1,4 @@
-# embeddings/embedder.py
+from __future__ import annotations
 
 from langchain_huggingface import HuggingFaceEndpointEmbeddings
 from config import HUGGINGFACE_API_KEY, EMBEDDING_MODEL

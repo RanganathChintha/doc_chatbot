@@ -1,7 +1,7 @@
 # loaders/tabular_loader.py
 
 import pandas as pd
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 def load_csv(file_path: str) -> list[Document]:
     """

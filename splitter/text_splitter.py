@@ -1,7 +1,7 @@
 # splitter/text_splitter.py
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
 from config import CHUNK_SIZE, CHUNK_OVERLAP
 
 def split_documents(documents: list[Document]) -> list[Document]:
