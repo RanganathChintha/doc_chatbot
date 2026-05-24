@@ -24,3 +24,13 @@ TOP_K = 4
 # --- Chroma Config ---
 CHROMA_PERSIST_DIR = "./chroma_db"
 CHROMA_COLLECTION_NAME = "rag_collection"
+
+# --- Cache Config ---
+CACHE_DIR = "./cache"
+IMAGE_CACHE_FILE = "./cache/image_extractions.json"
+EMBEDDING_CACHE_DIR = "./cache/embeddings"
+LLM_CACHE_FILE = "./cache/llm_responses.sqlite"
+MANIFEST_FILE = "./cache/source_manifest.json"
+
+# --- Memory Config ---
+CHAT_HISTORY_WINDOW = 5  # number of recent turns to keep in context

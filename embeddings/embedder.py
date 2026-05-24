@@ -1,13 +1,32 @@
 from __future__ import annotations
 
-from langchain_huggingface import HuggingFaceEmbeddings
-from config import EMBEDDING_MODEL
+import os
 
-def get_embedding_model() -> HuggingFaceEmbeddings:
+# Note: HF_HUB_OFFLINE / TRANSFORMERS_OFFLINE must be set in main.py BEFORE
+# any HF library is imported, not here — by the time this module runs, those
+# libraries have already cached their config from os.environ.
+
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_classic.embeddings import CacheBackedEmbeddings
+from langchain_classic.storage import LocalFileStore
+from config import EMBEDDING_MODEL, EMBEDDING_CACHE_DIR
+
+
+def get_embedding_model() -> CacheBackedEmbeddings:
     """
-    Initialize and return the embedding model locally
-    via sentence-transformers (no API key required).
+    Local sentence-transformers embedding model wrapped in a disk-backed
+    cache. Identical chunk texts skip re-embedding on subsequent runs.
+
+    Runs fully offline once the model is downloaded to the HF hub cache.
+    To download (or update) the model, temporarily unset HF_HUB_OFFLINE.
     """
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-    print(f"✅ Embedding model loaded locally: {EMBEDDING_MODEL}")
-    return embeddings
+    os.makedirs(EMBEDDING_CACHE_DIR, exist_ok=True)
+    underlying = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    store = LocalFileStore(EMBEDDING_CACHE_DIR)
+    cached = CacheBackedEmbeddings.from_bytes_store(
+        underlying,
+        store,
+        namespace=EMBEDDING_MODEL.replace("/", "_"),
+    )
+    print(f"✅ Embedding model loaded locally (cached, offline): {EMBEDDING_MODEL}")
+    return cached
