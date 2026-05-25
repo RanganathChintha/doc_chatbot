@@ -11,7 +11,7 @@ HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
 # --- Model Names ---
 IMAGE_EXTRACTOR_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # Scout via Groq
-LLM_MODEL = "openai/gpt-oss-120b"                                           # LLM via Groq
+LLM_MODEL = "openai/gpt-oss-20b" #"openai/gpt-oss-120b"               # LLM via Groq
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"           # HuggingFace
 
 # --- Splitter Config ---

@@ -110,7 +110,11 @@ def extract_text_from_images(images: list[Image.Image], source: str = "image") -
             hits += 1
         else:
             misses += 1
-        doc = extract_text_from_image(image, source=f"{source}_img_{idx}")
+        # Use the parent file path as the document `source` so images from
+        # the same file are grouped together. Previously each image used a
+        # unique source (e.g. "file.pdf_img_0") which created one retriever
+        # per image and caused retrieval to return many image sources.
+        doc = extract_text_from_image(image, source=source)
         if doc.page_content.strip().upper().startswith("SKIP"):
             continue
         documents.append(doc)

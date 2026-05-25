@@ -1,12 +1,11 @@
 # rag/rag_chain.py
 
 import os
-import re
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_core.runnables import RunnableLambda, RunnablePassthrough, RunnableBranch
+from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
 from langchain_core.globals import set_llm_cache
@@ -17,28 +16,6 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 set_llm_cache(SQLiteCache(database_path=LLM_CACHE_FILE))
 
 _session_histories: dict[str, InMemoryChatMessageHistory] = {}
-
-
-# Queries that should bypass relevance ranking and see every file's full content
-# (because every chunk is potentially relevant — summaries, overviews, per-file
-# breakdowns). For these, top-K similarity is the wrong tool.
-SUMMARY_INTENT = re.compile(
-    r"\b("
-    r"summari[sz]e|summary|overview|tl;?dr|brief|"
-    r"main\s+points|key\s+points|key\s+takeaways|gist|in\s+a\s+nutshell|"
-    r"what\s+(is|are)\s+(this|these|the)\s+(document|file|pdf|upload)|"
-    r"each\s+file|per\s+file|all\s+files?|every\s+file|"
-    r"compare\s+(the\s+)?files?"
-    r")\b",
-    re.IGNORECASE,
-)
-
-# Hard cap so per-file summary mode stays inside the LLM context window.
-MAX_CHUNKS_PER_FILE_FOR_SUMMARY = 15
-
-
-def _is_summary_query(text: str) -> bool:
-    return bool(SUMMARY_INTENT.search(text or ""))
 
 
 def get_session_history(session_id: str) -> BaseChatMessageHistory:
@@ -93,8 +70,6 @@ def build_rag_chain(
     Behavior:
       - For normal queries: pulls top-K from EACH file independently, so every
         uploaded file gets representation in the answer.
-      - For summary/overview queries: bypasses retrieval, sends all chunks
-        (capped per file) so the LLM can summarize each file.
       - History-aware: rewrites follow-ups into standalone questions before retrieval.
     """
     contextualize_prompt = ChatPromptTemplate.from_messages([
@@ -109,20 +84,10 @@ def build_rag_chain(
     contextualize_question = contextualize_prompt | llm | StrOutputParser()
 
     def _get_docs(inputs: dict) -> list[Document]:
-        """Per-file retrieval, or full-content bypass for summary queries."""
+        """Per-file retrieval for all queries."""
         raw_query = inputs.get("input", "")
 
-        # Always run intent detection on the ORIGINAL question (cheap regex)
-        # so summary phrasing isn't lost during contextualization.
-        if _is_summary_query(raw_query):
-            docs = []
-            for source, chunks in per_source_chunks.items():
-                docs.extend(chunks[:MAX_CHUNKS_PER_FILE_FOR_SUMMARY])
-            return docs
-
-        # Normal RAG path: contextualize the question (if history exists), then
-        # do similarity retrieval inside each file's mini-FAISS so every file
-        # contributes chunks.
+        # Contextualize the question if there is a chat history.
         if inputs.get("chat_history"):
             query = contextualize_question.invoke(inputs)
         else:
@@ -137,7 +102,7 @@ def build_rag_chain(
         "You are a careful, concise assistant answering questions about the "
         "user's uploaded documents.\n\n"
         "RULES:\n"
-        "1. Use ONLY the context below. If the answer is not present, say "
+        "1. Use the context below. If the answer is not present, say "
         "   \"I don't have enough information to answer that.\"\n"
         "2. Synthesize and rephrase in your own words. Do NOT copy long "
         "   passages verbatim from the context.\n"
