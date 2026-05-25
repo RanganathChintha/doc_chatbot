@@ -1,6 +1,7 @@
 # rag/rag_chain.py
 
 import os
+import re
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
@@ -18,11 +19,30 @@ set_llm_cache(SQLiteCache(database_path=LLM_CACHE_FILE))
 _session_histories: dict[str, InMemoryChatMessageHistory] = {}
 
 
-def get_session_history(session_id: str) -> BaseChatMessageHistory:
-    """Return (and lazily create) the chat history for a session.
+# Queries that should bypass relevance ranking and see every file's full content
+# (because every chunk is potentially relevant — summaries, overviews, per-file
+# breakdowns). For these, top-K similarity is the wrong tool.
+SUMMARY_INTENT = re.compile(
+    r"\b("
+    r"summari[sz]e|summary|overview|tl;?dr|brief|"
+    r"main\s+points|key\s+points|key\s+takeaways|gist|in\s+a\s+nutshell|"
+    r"what\s+(is|are)\s+(this|these|the)\s+(document|file|pdf|upload)|"
+    r"each\s+file|per\s+file|all\s+files?|every\s+file|"
+    r"compare\s+(the\s+)?files?"
+    r")\b",
+    re.IGNORECASE,
+)
 
-    Trims to the last CHAT_HISTORY_WINDOW * 2 messages (one human + one AI per turn).
-    """
+# Hard cap so per-file summary mode stays inside the LLM context window.
+MAX_CHUNKS_PER_FILE_FOR_SUMMARY = 15
+
+
+def _is_summary_query(text: str) -> bool:
+    return bool(SUMMARY_INTENT.search(text or ""))
+
+
+def get_session_history(session_id: str) -> BaseChatMessageHistory:
+    """Per-session window-buffer chat history."""
     history = _session_histories.get(session_id)
     if history is None:
         history = InMemoryChatMessageHistory()
@@ -44,25 +64,38 @@ def get_llm() -> ChatGroq:
 
 
 def _format_tagged_context(docs: list[Document]) -> str:
+    """Tag each chunk with [FILE: filename | TYPE] so the LLM can answer per file."""
     lines = []
     for d in docs:
-        tag = "TEXT" if d.metadata.get("source_type") == "text" else "IMAGE"
-        lines.append(f"[{tag}] {d.page_content}")
+        source = d.metadata.get("source", "?")
+        source_name = os.path.basename(source) if source else "?"
+        kind = "TEXT" if d.metadata.get("source_type") == "text" else "IMAGE"
+        page = d.metadata.get("page")
+        page_str = f" p.{page}" if page is not None else ""
+        lines.append(f"[FILE: {source_name}{page_str} | {kind}] {d.page_content}")
     return "\n\n".join(lines)
 
 
-def build_rag_chain(retriever, llm: ChatGroq):
+def build_rag_chain(
+    per_source_retrievers: dict,
+    per_source_chunks: dict,
+    llm: ChatGroq,
+):
     """
-    History-aware conversational RAG chain built with pure LCEL.
+    Conversational RAG chain with per-file retrieval.
 
-    Flow:
-      1. If chat_history is non-empty, rewrite the question into a standalone
-         one using the history (so retrieval understands follow-ups).
-      2. Retrieve top-K chunks for that standalone question.
-      3. Format chunks with [TEXT]/[IMAGE] source tags.
-      4. Answer with the LLM, given context + chat_history + original input.
-      5. Wrap everything with RunnableWithMessageHistory so per-session
-         history is loaded/saved automatically.
+    Args:
+        per_source_retrievers: {source_path -> Retriever} produced by
+            retriever.faiss_retriever.build_per_source_retrievers
+        per_source_chunks: {source_path -> list[Document]} (all chunks per file)
+        llm: ChatGroq instance
+
+    Behavior:
+      - For normal queries: pulls top-K from EACH file independently, so every
+        uploaded file gets representation in the answer.
+      - For summary/overview queries: bypasses retrieval, sends all chunks
+        (capped per file) so the LLM can summarize each file.
+      - History-aware: rewrites follow-ups into standalone questions before retrieval.
     """
     contextualize_prompt = ChatPromptTemplate.from_messages([
         ("system",
@@ -73,28 +106,47 @@ def build_rag_chain(retriever, llm: ChatGroq):
         MessagesPlaceholder("chat_history"),
         ("human", "{input}"),
     ])
-
     contextualize_question = contextualize_prompt | llm | StrOutputParser()
 
-    # Only rewrite when there is history; otherwise use the raw input.
-    question_for_retrieval = RunnableBranch(
-        (
-            lambda x: bool(x.get("chat_history")),
-            contextualize_question,
-        ),
-        (lambda x: x["input"]),
-    )
+    def _get_docs(inputs: dict) -> list[Document]:
+        """Per-file retrieval, or full-content bypass for summary queries."""
+        raw_query = inputs.get("input", "")
+
+        # Always run intent detection on the ORIGINAL question (cheap regex)
+        # so summary phrasing isn't lost during contextualization.
+        if _is_summary_query(raw_query):
+            docs = []
+            for source, chunks in per_source_chunks.items():
+                docs.extend(chunks[:MAX_CHUNKS_PER_FILE_FOR_SUMMARY])
+            return docs
+
+        # Normal RAG path: contextualize the question (if history exists), then
+        # do similarity retrieval inside each file's mini-FAISS so every file
+        # contributes chunks.
+        if inputs.get("chat_history"):
+            query = contextualize_question.invoke(inputs)
+        else:
+            query = raw_query
+
+        docs = []
+        for source, retriever in per_source_retrievers.items():
+            docs.extend(retriever.invoke(query))
+        return docs
 
     qa_system_prompt = (
-        "You are a helpful and knowledgeable assistant.\n"
-        "Use the retrieved context below to answer the user's question.\n\n"
-        "The context contains snippets from two source types:\n"
-        "- [TEXT]  — extracted directly from the document text. Treat as authoritative.\n"
-        "- [IMAGE] — generated by a vision model describing embedded images. Use only "
-        "as supporting detail; prefer [TEXT] when the two disagree, and never treat "
-        "[IMAGE] descriptions as exact quotes from the document.\n\n"
-        "If the answer is not in the context, say "
-        "\"I don't have enough information to answer that.\"\n\n"
+        "You are a careful, concise assistant answering questions about the "
+        "user's uploaded documents.\n\n"
+        "RULES:\n"
+        "1. Use ONLY the context below. If the answer is not present, say "
+        "   \"I don't have enough information to answer that.\"\n"
+        "2. Synthesize and rephrase in your own words. Do NOT copy long "
+        "   passages verbatim from the context.\n"
+        "3. Respect any length / format the user asks for (e.g. \"in 5 lines\", "
+        "   \"as a table\", \"per file\"). If the user does not specify, be brief.\n"
+        "4. When the question is about each / every / per file, structure the "
+        "   answer with one section per file, using the file name as a heading.\n"
+        "5. Context chunks are tagged [FILE: <name> | TEXT] (authoritative) or "
+        "   [FILE: <name> | IMAGE] (vision-model description — supporting only).\n\n"
         "Context:\n{context}"
     )
 
@@ -104,10 +156,12 @@ def build_rag_chain(retriever, llm: ChatGroq):
         ("human", "{input}"),
     ])
 
-    # Compose: retrieve → format → answer.
     rag_chain = (
         RunnablePassthrough.assign(
-            context=question_for_retrieval | retriever | RunnableLambda(_format_tagged_context),
+            docs=RunnableLambda(_get_docs),
+        )
+        | RunnablePassthrough.assign(
+            context=lambda x: _format_tagged_context(x["docs"]),
         )
         | RunnablePassthrough.assign(
             answer=qa_prompt | llm | StrOutputParser(),
