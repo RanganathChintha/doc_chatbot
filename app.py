@@ -17,12 +17,14 @@ import os
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("LANGSMITH_TRACING_V2", "true")
 
 import hashlib
 import uuid
 from pathlib import Path
 
 import streamlit as st
+from langsmith_tracing import langsmith_traceable as traceable
 
 from pipeline import load_and_chunk
 from embeddings.embedder import get_embedding_model
@@ -59,6 +61,7 @@ def _fingerprint(paths: list[Path]) -> str:
     return h.hexdigest()
 
 
+@traceable(run_type="tool", name="build_chain_for_files")
 def build_chain_for_files(file_paths: list[Path]):
     """Build per-file retrievers + the conversational chain for the upload set."""
     chunks = load_and_chunk([str(p) for p in file_paths], verbose=False)
@@ -71,6 +74,14 @@ def build_chain_for_files(file_paths: list[Path]):
     llm = cached_llm()
     chain = build_rag_chain(per_source_retrievers, per_source_chunks, llm)
     return chain, len(chunks)
+
+
+@traceable(run_type="tool", name="invoke_rag_chain")
+def invoke_rag_chain(chain, query, session_id):
+    return chain.invoke(
+        {"input": query},
+        config={"configurable": {"session_id": session_id}},
+    )
 
 
 # ─────────────────────────────────────────────
@@ -192,9 +203,10 @@ else:
             placeholder = st.empty()
             placeholder.markdown("_Thinking…_")
             try:
-                response = st.session_state.chain.invoke(
-                    {"input": query},
-                    config={"configurable": {"session_id": st.session_state.session_id}},
+                response = invoke_rag_chain(
+                    st.session_state.chain,
+                    query,
+                    st.session_state.session_id,
                 )
                 answer = response["answer"]
                 sources = response.get("docs", [])

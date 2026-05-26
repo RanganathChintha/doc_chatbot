@@ -4,8 +4,10 @@ from collections import defaultdict
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from config import TOP_K
+from langsmith_tracing import langsmith_traceable as traceable
 
 
+@traceable(run_type="tool", name="build_faiss_retriever")
 def build_faiss_retriever(chunks: list[Document], embedding_model):
     """
     Single global FAISS index over all chunks (legacy / fallback).
@@ -19,6 +21,7 @@ def build_faiss_retriever(chunks: list[Document], embedding_model):
     return retriever
 
 
+@traceable(run_type="tool", name="build_per_source_retrievers")
 def build_per_source_retrievers(
     chunks: list[Document],
     embedding_model,

@@ -10,6 +10,7 @@ from PIL import Image
 from groq import Groq
 from langchain_core.documents import Document
 from config import GROQ_API_KEY, IMAGE_EXTRACTOR_MODEL, IMAGE_CACHE_FILE, CACHE_DIR
+from langsmith_tracing import langsmith_traceable as traceable
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
@@ -49,6 +50,7 @@ def pil_image_to_base64(image: Image.Image) -> str:
     return base64.b64encode(buffer.read()).decode("utf-8")
 
 
+@traceable(run_type="tool", name="extract_text_from_image")
 def extract_text_from_image(image: Image.Image, source: str = "image") -> Document:
     """
     Use the Scout VLM (via Groq) to summarize an image.
@@ -99,6 +101,7 @@ def extract_text_from_image(image: Image.Image, source: str = "image") -> Docume
     )
 
 
+@traceable(run_type="tool", name="extract_text_from_images")
 def extract_text_from_images(images: list[Image.Image], source: str = "image") -> list[Document]:
     documents = []
     hits = 0

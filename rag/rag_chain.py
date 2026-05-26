@@ -11,6 +11,7 @@ from langchain_core.documents import Document
 from langchain_core.globals import set_llm_cache
 from langchain_community.cache import SQLiteCache
 from config import GROQ_API_KEY, LLM_MODEL, LLM_CACHE_FILE, CACHE_DIR, CHAT_HISTORY_WINDOW
+from langsmith_tracing import langsmith_traceable as traceable
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 set_llm_cache(SQLiteCache(database_path=LLM_CACHE_FILE))
@@ -30,6 +31,7 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
     return history
 
 
+@traceable(run_type="tool", name="get_llm")
 def get_llm() -> ChatGroq:
     llm = ChatGroq(
         api_key=GROQ_API_KEY,
@@ -53,6 +55,7 @@ def _format_tagged_context(docs: list[Document]) -> str:
     return "\n\n".join(lines)
 
 
+@traceable(run_type="chain", name="build_rag_chain")
 def build_rag_chain(
     per_source_retrievers: dict,
     per_source_chunks: dict,

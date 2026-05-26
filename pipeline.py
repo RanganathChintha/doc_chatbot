@@ -8,8 +8,10 @@ from loaders.image_loader import load_image
 from loaders.tabular_loader import load_csv, load_excel
 from extractors.image_extractor import extract_text_from_images
 from splitter.text_splitter import split_documents
+from langsmith_tracing import langsmith_traceable as traceable
 
 
+@traceable(run_type="tool", name="load_and_chunk")
 def load_and_chunk(input_files: list[str], verbose: bool = True):
     """Parse all input files into Documents, then split into chunks.
 

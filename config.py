@@ -8,6 +8,11 @@ load_dotenv()
 # --- API Keys ---
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
+LANGSMITH_PROJECT_NAME = os.getenv("LANGSMITH_PROJECT_NAME", "doc_chatbot")
+
+if LANGSMITH_API_KEY:
+    os.environ.setdefault("LANGCHAIN_API_KEY", LANGSMITH_API_KEY)
 
 # --- Model Names ---
 IMAGE_EXTRACTOR_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # Scout via Groq

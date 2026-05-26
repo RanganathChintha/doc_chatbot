@@ -7,12 +7,14 @@ import os
 # (the libraries cache these env vars at module import time).
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("LANGSMITH_TRACING_V2", "true")
 
 import uuid
 from pipeline import load_and_chunk
 from embeddings.embedder import get_embedding_model
 from retriever.faiss_retriever import build_per_source_retrievers
 from rag.rag_chain import get_llm, build_rag_chain
+from langsmith_tracing import langsmith_traceable as traceable
 
 # ─────────────────────────────────────────────
 # STEP 1: Define your input files
@@ -47,6 +49,14 @@ session_id = str(uuid.uuid4())
 print(f"\n🤖 RAG System Ready! (session {session_id[:8]}) Ask your questions below.")
 print("Type 'exit' to quit, 'reset' to clear chat history.\n")
 
+@traceable(run_type="tool", name="invoke_rag_chain")
+def invoke_rag_chain(chain, query, session_id):
+    return chain.invoke(
+        {"input": query},
+        config={"configurable": {"session_id": session_id}},
+    )
+
+
 while True:
     try:
         query = input("You: ").strip()
@@ -64,9 +74,6 @@ while True:
     if not query:
         continue
 
-    response = rag_chain.invoke(
-        {"input": query},
-        config={"configurable": {"session_id": session_id}},
-    )
+    response = invoke_rag_chain(rag_chain, query, session_id)
     print(f"\n🤖 Assistant: {response['answer']}\n")
     print("-" * 60)

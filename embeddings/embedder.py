@@ -10,8 +10,10 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_classic.embeddings import CacheBackedEmbeddings
 from langchain_classic.storage import LocalFileStore
 from config import EMBEDDING_MODEL, EMBEDDING_CACHE_DIR
+from langsmith_tracing import langsmith_traceable as traceable
 
 
+@traceable(run_type="tool", name="get_embedding_model")
 def get_embedding_model() -> CacheBackedEmbeddings:
     """
     Local sentence-transformers embedding model wrapped in a disk-backed

@@ -4,10 +4,12 @@ import fitz  # PyMuPDF - for image extraction from PDF
 from PIL import Image
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
+from langsmith_tracing import langsmith_traceable as traceable
 import io
 
 MIN_IMAGE_DIMENSION = 100  # skip logos/icons/decorative images smaller than this
 
+@traceable(run_type="tool", name="load_pdf_text")
 def load_pdf_text(file_path: str) -> list[Document]:
     """
     Extract text from PDF using PyPDFLoader.
@@ -19,6 +21,7 @@ def load_pdf_text(file_path: str) -> list[Document]:
         p.metadata["source_type"] = "text"
     return pages
 
+@traceable(run_type="tool", name="extract_images_from_pdf")
 def extract_images_from_pdf(file_path: str) -> list[Image.Image]:
     """
     Extract embedded images from a PDF using PyMuPDF + PIL.
