@@ -10,7 +10,16 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
 from langchain_core.globals import set_llm_cache
 from langchain_community.cache import SQLiteCache
-from config import GROQ_API_KEY, LLM_MODEL, LLM_CACHE_FILE, CACHE_DIR, CHAT_HISTORY_WINDOW
+from config import (
+    GROQ_API_KEY,
+    LLM_MODEL,
+    LLM_CACHE_FILE,
+    CACHE_DIR,
+    CHAT_HISTORY_WINDOW,
+    TOP_K,
+    RETRIEVAL_SCORE_THRESHOLD,
+    DEBUG_RETRIEVAL,
+)
 from langsmith_tracing import langsmith_traceable as traceable
 
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -57,22 +66,20 @@ def _format_tagged_context(docs: list[Document]) -> str:
 
 @traceable(run_type="chain", name="build_rag_chain")
 def build_rag_chain(
-    per_source_retrievers: dict,
-    per_source_chunks: dict,
+    retriever,
+    source_names: list[str],
     llm: ChatGroq,
 ):
     """
-    Conversational RAG chain with per-file retrieval.
+    Conversational RAG chain with global top-K retrieval.
 
     Args:
-        per_source_retrievers: {source_path -> Retriever} produced by
-            retriever.faiss_retriever.build_per_source_retrievers
-        per_source_chunks: {source_path -> list[Document]} (all chunks per file)
+        retriever: global FAISS store over all chunks
+        source_names: all source file paths in the indexed corpus
         llm: ChatGroq instance
 
     Behavior:
-      - For normal queries: pulls top-K from EACH file independently, so every
-        uploaded file gets representation in the answer.
+      - For normal queries: pulls the top-K most related chunks overall.
       - History-aware: rewrites follow-ups into standalone questions before retrieval.
     """
     contextualize_prompt = ChatPromptTemplate.from_messages([
@@ -86,8 +93,16 @@ def build_rag_chain(
     ])
     contextualize_question = contextualize_prompt | llm | StrOutputParser()
 
+    def _find_source_hint(query: str) -> str | None:
+        normalized = query.lower()
+        for source in source_names:
+            source_name = os.path.basename(source).lower()
+            if source_name and source_name in normalized:
+                return source
+        return None
+
     def _get_docs(inputs: dict) -> list[Document]:
-        """Per-file retrieval for all queries."""
+        """Global top-K retrieval for all queries."""
         raw_query = inputs.get("input", "")
 
         # Contextualize the question if there is a chat history.
@@ -96,32 +111,35 @@ def build_rag_chain(
         else:
             query = raw_query
 
-        docs = []
-        for source, retriever in per_source_retrievers.items():
-            docs.extend(retriever.invoke(query))
-        return docs
+        if hasattr(retriever, "similarity_search_with_score"):
+            results = retriever.similarity_search_with_score(query, k=TOP_K)
+            source_hint = _find_source_hint(query)
+            if source_hint:
+                results.sort(
+                    key=lambda pair: pair[0].metadata.get("source") == source_hint,
+                    reverse=True,
+                )
+            filtered = [doc for doc, score in results if score >= RETRIEVAL_SCORE_THRESHOLD]
+            if not filtered:
+                filtered = [doc for doc, _ in results]
+            docs = filtered[:TOP_K]
+            if DEBUG_RETRIEVAL:
+                print("🧠 Retrieval debug:")
+                for doc, score in results[:TOP_K]:
+                    print(f"  - source={doc.metadata.get('source')} score={score:.4f}")
+            return docs
+
+        return retriever.invoke(query)
 
     qa_system_prompt = (
-        "You are a careful, concise assistant answering questions about the "
-        "user's uploaded documents.\n\n"
-        "RULES:\n"
-        "1. Use the context below. If the answer is not present, say "
-        "   \"I don't have enough information to answer that.\"\n"
-        "2. Synthesize and rephrase in your own words. Do NOT copy long "
-        "   passages verbatim from the context.\n"
-        "3. Respect any length / format the user asks for (e.g. \"in 5 lines\", "
-        "   \"as a table\", \"per file\"). If the user does not specify, be brief.\n"
-        "4. When the question is about each / every / per file, structure the "
-        "   answer with one section per file, using the file name as a heading.\n"
-        "5. Context chunks are tagged [FILE: <name> | TEXT] (authoritative) or "
-        "   [FILE: <name> | IMAGE] (vision-model description — supporting only).\n\n"
-        "Context:\n{context}"
+        "Answer using only the context. Do not hallucinate. "
+        "If unavailable, say so. Cite sources. Be concise."
     )
 
     qa_prompt = ChatPromptTemplate.from_messages([
         ("system", qa_system_prompt),
         MessagesPlaceholder("chat_history"),
-        ("human", "{input}"),
+        ("human", "{question}"),
     ])
 
     rag_chain = (
@@ -130,6 +148,9 @@ def build_rag_chain(
         )
         | RunnablePassthrough.assign(
             context=lambda x: _format_tagged_context(x["docs"]),
+        )
+        | RunnablePassthrough.assign(
+            question=lambda x: x["input"],
         )
         | RunnablePassthrough.assign(
             answer=qa_prompt | llm | StrOutputParser(),

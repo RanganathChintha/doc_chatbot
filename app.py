@@ -28,7 +28,7 @@ from langsmith_tracing import langsmith_traceable as traceable
 
 from pipeline import load_and_chunk
 from embeddings.embedder import get_embedding_model
-from retriever.faiss_retriever import build_per_source_retrievers
+from retriever.faiss_retriever import build_faiss_retriever
 from rag.rag_chain import get_llm, build_rag_chain
 
 UPLOAD_DIR = Path("data/uploads")
@@ -63,16 +63,19 @@ def _fingerprint(paths: list[Path]) -> str:
 
 @traceable(run_type="tool", name="build_chain_for_files")
 def build_chain_for_files(file_paths: list[Path]):
-    """Build per-file retrievers + the conversational chain for the upload set."""
+    """Build a global persistent FAISS retriever + the conversational chain."""
     chunks = load_and_chunk([str(p) for p in file_paths], verbose=False)
     if not chunks:
         return None, 0
     embedding_model = cached_embedding_model()
-    per_source_retrievers, per_source_chunks = build_per_source_retrievers(
-        chunks, embedding_model
+    retriever = build_faiss_retriever(
+        chunks,
+        embedding_model,
+        source_files=[str(p) for p in file_paths],
     )
+    source_names = sorted({doc.metadata.get("source", "") for doc in chunks if doc.metadata.get("source")})
     llm = cached_llm()
-    chain = build_rag_chain(per_source_retrievers, per_source_chunks, llm)
+    chain = build_rag_chain(retriever, source_names, llm)
     return chain, len(chunks)
 
 

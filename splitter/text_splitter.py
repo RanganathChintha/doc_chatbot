@@ -2,8 +2,10 @@
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
+from langsmith import traceable
 from config import CHUNK_SIZE, CHUNK_OVERLAP
 
+@traceable(run_type="tool", name="Splitting_the_text_into_chunks")
 def split_documents(documents: list[Document]) -> list[Document]:
     """
     Split a list of LangChain Documents into smaller chunks

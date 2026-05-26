@@ -16,15 +16,18 @@ if LANGSMITH_API_KEY:
 
 # --- Model Names ---
 IMAGE_EXTRACTOR_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # Scout via Groq
-LLM_MODEL = "openai/gpt-oss-20b" #"openai/gpt-oss-120b"               # LLM via Groq
+LLM_MODEL = "openai/gpt-oss-120b"               # LLM via Groq
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"           # HuggingFace
 
 # --- Splitter Config ---
-CHUNK_SIZE = 1000
-CHUNK_OVERLAP = 150
+# Smaller chunks with moderate overlap improve retrieval precision and speed.
+CHUNK_SIZE = 800
+CHUNK_OVERLAP = 120
 
 # --- Retriever Config ---
-TOP_K = 4
+TOP_K = 5
+RETRIEVAL_SCORE_THRESHOLD = 0.1
+DEBUG_RETRIEVAL = False
 
 # --- Chroma Config ---
 CHROMA_PERSIST_DIR = "./chroma_db"

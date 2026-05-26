@@ -12,7 +12,7 @@ os.environ.setdefault("LANGSMITH_TRACING_V2", "true")
 import uuid
 from pipeline import load_and_chunk
 from embeddings.embedder import get_embedding_model
-from retriever.faiss_retriever import build_per_source_retrievers
+from retriever.faiss_retriever import build_faiss_retriever
 from rag.rag_chain import get_llm, build_rag_chain
 from langsmith_tracing import langsmith_traceable as traceable
 
@@ -27,20 +27,19 @@ input_files = [
 ]
 
 # ─────────────────────────────────────────────
-# STEP 2: Load, chunk, embed, build per-file retrievers
+# STEP 2: Load, chunk, embed, and build a persistent global FAISS index
 # (image + embedding caches make repeat runs fast)
 # ─────────────────────────────────────────────
 embedding_model = get_embedding_model()
 chunks = load_and_chunk(input_files)
-per_source_retrievers, per_source_chunks = build_per_source_retrievers(
-    chunks, embedding_model
-)
+retriever = build_faiss_retriever(chunks, embedding_model, source_files=input_files)
+source_names = sorted({doc.metadata.get("source", "") for doc in chunks if doc.metadata.get("source")})
 
 # ─────────────────────────────────────────────
 # STEP 3: LLM + conversational RAG chain
 # ─────────────────────────────────────────────
 llm = get_llm()
-rag_chain = build_rag_chain(per_source_retrievers, per_source_chunks, llm)
+rag_chain = build_rag_chain(retriever, source_names, llm)
 
 # ─────────────────────────────────────────────
 # STEP 4: Chat loop — one session_id per run

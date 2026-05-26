@@ -162,6 +162,7 @@ venv.bak/
 chroma_db/
 rag_collection/
 data/
+.streamlit/
 cache/
 
 # Spyder project settings
