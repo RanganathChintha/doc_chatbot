@@ -1,9 +1,7 @@
 # retriever/faiss_retriever.py
 
-import hashlib
 import json
 import os
-from pathlib import Path
 from typing import Any
 
 from langchain_community.vectorstores import FAISS
@@ -76,15 +74,15 @@ def build_faiss_retriever(
     if _manifest_matches(files_to_check, MANIFEST_FILE) and os.path.isdir(persist_dir):
         try:
             store = FAISS.load_local(persist_dir, embedding_model)
-            print("✅ Loaded persistent FAISS index from disk.")
+            print("Loaded persistent FAISS index from disk.")
             return store
         except Exception:
-            print("⚠️ Failed to load existing FAISS index, rebuilding.")
+            print("Failed to load existing FAISS index, rebuilding.")
 
     store = FAISS.from_documents(documents=chunks, embedding=embedding_model)
     store.save_local(persist_dir)
     _save_manifest(_build_manifest(files_to_check), MANIFEST_FILE)
-    print(f"✅ Built new FAISS index and persisted it to {persist_dir}.")
+    print(f"Built new FAISS index and persisted it to {persist_dir}.")
     return store
 
 
@@ -122,7 +120,51 @@ def build_per_source_retrievers(
         )
 
     print(
-        f"✅ Per-file retrievers ready: {len(retrievers)} file(s), "
+        f"Per-file retrievers ready: {len(retrievers)} file(s), "
         f"top-{k_per_source} per file."
     )
     return retrievers, dict(by_source)
+
+
+class MultiRetriever:
+    """Combine many per-source retrievers into a single semantic retriever.
+
+    Exposes `similarity_search_with_score(query, k=...)` and a helper
+    `add_retrievers()` for incremental merging.
+    """
+
+    def __init__(self, retrievers: dict[str, Any] | None = None):
+        self.retrievers: dict[str, Any] = retrievers or {}
+
+    def add_retrievers(self, new: dict[str, Any]) -> None:
+        self.retrievers.update(new)
+
+    def similarity_search_with_score(self, query: str, k: int | None = None):
+        results: list[tuple[Document, float]] = []
+        per_k = k or TOP_K
+        for src, r in self.retrievers.items():
+            try:
+                res = r.similarity_search_with_score(query, k=per_k)
+                results.extend(res)
+            except Exception:
+                try:
+                    docs = r.invoke(query)
+                    results.extend([(d, 0.5) for d in docs])
+                except Exception:
+                    continue
+
+        # Deduplicate by (source,page,content-hash) preserving highest score
+        seen = set()
+        unique: list[tuple[Document, float]] = []
+        for doc, score in sorted(results, key=lambda x: x[1], reverse=True):
+            key = (
+                doc.metadata.get("source", ""),
+                doc.metadata.get("page", ""),
+                hash(doc.page_content) % 100000,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append((doc, score))
+
+        return unique[: per_k * 2]

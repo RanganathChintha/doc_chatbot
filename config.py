@@ -7,7 +7,6 @@ load_dotenv()
 
 # --- API Keys ---
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
 LANGSMITH_PROJECT_NAME = os.getenv("LANGSMITH_PROJECT_NAME", "doc_chatbot")
 
@@ -25,8 +24,8 @@ CHUNK_SIZE = 800
 CHUNK_OVERLAP = 120
 
 # --- Retriever Config ---
-TOP_K = 5
-RETRIEVAL_SCORE_THRESHOLD = 0.1
+TOP_K = 10  # Retrieve top 10 candidates, then re-rank
+RETRIEVAL_SCORE_THRESHOLD = 0.3  # Stricter filtering for quality results
 DEBUG_RETRIEVAL = False
 
 # --- Chroma Config ---

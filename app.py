@@ -28,8 +28,11 @@ from langsmith_tracing import langsmith_traceable as traceable
 
 from pipeline import load_and_chunk
 from embeddings.embedder import get_embedding_model
-from retriever.faiss_retriever import build_faiss_retriever
+from retriever.faiss_retriever import build_per_source_retrievers, MultiRetriever
+from retriever.hybrid_retriever import build_hybrid_retriever
+from vectorstore.chroma_store import clear_chroma_vectorstore, persist_chunks_to_chroma
 from rag.rag_chain import get_llm, build_rag_chain
+from config import TOP_K
 
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -63,20 +66,111 @@ def _fingerprint(paths: list[Path]) -> str:
 
 @traceable(run_type="tool", name="build_chain_for_files")
 def build_chain_for_files(file_paths: list[Path]):
-    """Build a global persistent FAISS retriever + the conversational chain."""
-    chunks = load_and_chunk([str(p) for p in file_paths], verbose=False)
-    if not chunks:
-        return None, 0
+    """Build a global persistent FAISS retriever + hybrid search + the conversational chain."""
+    # Support incremental indexing: if a chain already exists in session_state,
+    # only chunk and index the newly uploaded files and merge them into the
+    # existing retrievers and BM25 index. This avoids rebuilding the entire
+    # index on every upload.
+
+    # Resolve file paths and names
+    all_paths = [Path(p) for p in file_paths]
+    all_names = [p.name for p in all_paths]
+
+    # If there is no existing chain, build everything from scratch
+    if not st.session_state.get("chain") or not st.session_state.get("indexed_files"):
+        chunks = load_and_chunk([str(p) for p in all_paths], verbose=False)
+        if not chunks:
+            return None, 0
+        embedding_model = cached_embedding_model()
+        persist_chunks_to_chroma(
+            chunks,
+            embedding_model,
+            source_files=[str(p) for p in all_paths],
+        )
+
+        # Build per-source retrievers (one FAISS per file) and a MultiRetriever
+        retrievers_dict, by_source = build_per_source_retrievers(chunks, embedding_model, k_per_source=TOP_K)
+        semantic_multi = MultiRetriever(retrievers_dict)
+
+        # Hybrid retriever will build its own BM25 index from `chunks`
+        hybrid_retriever = build_hybrid_retriever(
+            semantic_retriever=semantic_multi,
+            chunks=chunks,
+            k=10,
+            use_bm25=True,
+        )
+
+        source_names = sorted({doc.metadata.get("source", "") for doc in chunks if doc.metadata.get("source")})
+        llm = cached_llm()
+        chain = build_rag_chain(hybrid_retriever, source_names, llm)
+
+        # Persist pieces in session_state for incremental updates
+        st.session_state.chain = chain
+        st.session_state.retriever = hybrid_retriever
+        st.session_state.semantic_retriever = semantic_multi
+        st.session_state.by_source = by_source
+        st.session_state.indexed_files = all_names
+
+        return chain, len(chunks)
+
+    # Existing chain present: compute which files are new
+    existing_names: list[str] = st.session_state.get("indexed_files", [])
+    new_paths = [p for p in all_paths if p.name not in existing_names]
+    if not new_paths:
+        # Nothing new to index; return existing chain and zero new chunks
+        return st.session_state.chain, 0
+
+    # Chunk only the new files
+    new_chunks = load_and_chunk([str(p) for p in new_paths], verbose=False)
+    if not new_chunks:
+        return st.session_state.chain, 0
+
     embedding_model = cached_embedding_model()
-    retriever = build_faiss_retriever(
-        chunks,
+    persist_chunks_to_chroma(
+        new_chunks,
         embedding_model,
-        source_files=[str(p) for p in file_paths],
+        source_files=[str(p) for p in new_paths],
     )
-    source_names = sorted({doc.metadata.get("source", "") for doc in chunks if doc.metadata.get("source")})
+
+    # Build per-source retrievers for the new chunks and merge into existing semantic retriever
+    new_retrievers, new_by_source = build_per_source_retrievers(new_chunks, embedding_model, k_per_source=TOP_K)
+    semantic_multi: MultiRetriever = st.session_state.semantic_retriever
+    if hasattr(semantic_multi, "add_retrievers"):
+        semantic_multi.add_retrievers(new_retrievers)
+    else:
+        # Fallback: if the existing semantic retriever cannot merge, rebuild full chain
+        return build_chain_for_files(file_paths)
+
+    # Merge by_source mapping for bookkeeping and BM25 rebuild
+    by_source: dict = st.session_state.get("by_source", {})
+    by_source.update(new_by_source)
+    st.session_state.by_source = by_source
+
+    # Rebuild BM25 retriever from all known chunks (safe and simple)
+    all_chunks = []
+    for docs in by_source.values():
+        all_chunks.extend(docs)
+
+    # Recreate hybrid retriever using the updated semantic retriever and full chunk list
+    hybrid_retriever = build_hybrid_retriever(
+        semantic_retriever=semantic_multi,
+        chunks=all_chunks,
+        k=10,
+        use_bm25=True,
+    )
+
+    # Rebuild the RAG chain with the updated retriever
+    source_names = sorted({doc.metadata.get("source", "") for doc in all_chunks if doc.metadata.get("source")})
     llm = cached_llm()
-    chain = build_rag_chain(retriever, source_names, llm)
-    return chain, len(chunks)
+    chain = build_rag_chain(hybrid_retriever, source_names, llm)
+
+    # Update session state
+    st.session_state.chain = chain
+    st.session_state.retriever = hybrid_retriever
+    st.session_state.semantic_retriever = semantic_multi
+    st.session_state.indexed_files = existing_names + [p.name for p in new_paths]
+
+    return chain, len(new_chunks)
 
 
 @traceable(run_type="tool", name="invoke_rag_chain")
@@ -163,6 +257,10 @@ with st.sidebar:
             st.session_state.chain = None
             st.session_state.files_fingerprint = None
             st.session_state.indexed_files = []
+            try:
+                clear_chroma_vectorstore(cached_embedding_model())
+            except Exception:
+                pass
             st.session_state.session_id = str(uuid.uuid4())
             st.session_state.messages = []
             st.rerun()

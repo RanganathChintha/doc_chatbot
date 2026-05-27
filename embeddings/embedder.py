@@ -30,5 +30,5 @@ def get_embedding_model() -> CacheBackedEmbeddings:
         store,
         namespace=EMBEDDING_MODEL.replace("/", "_"),
     )
-    print(f"✅ Embedding model loaded locally (cached, offline): {EMBEDDING_MODEL}")
+    print(f"Embedding model loaded locally (cached, offline): {EMBEDDING_MODEL}")
     return cached

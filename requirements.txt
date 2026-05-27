@@ -16,3 +16,4 @@ pandas
 openpyxl
 python-dotenv
 streamlit
+rank_bm25

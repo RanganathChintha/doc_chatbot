@@ -163,6 +163,7 @@ chroma_db/
 rag_collection/
 data/
 .streamlit/
+md/
 cache/
 
 # Spyder project settings

@@ -73,9 +73,9 @@ def extract_text_from_image(image: Image.Image, source: str = "image") -> Docume
                         {
                             "type": "text",
                             "text": (
-                                "Summarize this image in 2-3 concise sentences. "
-                                "Focus only on the key information (main subject, "
-                                "any visible text, key data points). "
+                                "Summarize this image"
+                                "Focus only on the key information, main subject, "
+                                "any visible text, key data points. "
                                 "Skip decorative details. If the image is a logo, "
                                 "icon, or has no substantive content, reply exactly: SKIP."
                             )

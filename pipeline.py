@@ -46,8 +46,8 @@ def load_and_chunk(input_files: list[str], verbose: bool = True):
 
         else:
             if verbose:
-                print(f"⚠️  Unsupported file type: {ext} — skipping.")
+                print(f"Unsupported file type: {ext} - skipping.")
 
     if verbose:
-        print(f"\n✅ Total documents collected: {len(all_documents)}")
+        print(f"\nTotal documents collected: {len(all_documents)}")
     return split_documents(all_documents)

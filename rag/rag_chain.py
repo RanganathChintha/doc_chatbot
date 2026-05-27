@@ -47,7 +47,7 @@ def get_llm() -> ChatGroq:
         model_name=LLM_MODEL,
         temperature=0.2,
     )
-    print(f"✅ LLM loaded: {LLM_MODEL} via ChatGroq (SQLite response cache active)")
+    print(f"LLM loaded: {LLM_MODEL} via ChatGroq (SQLite response cache active)")
     return llm
 
 
@@ -102,7 +102,7 @@ def build_rag_chain(
         return None
 
     def _get_docs(inputs: dict) -> list[Document]:
-        """Global top-K retrieval for all queries."""
+        """Enhanced retrieval with scoring, filtering, and re-ranking."""
         raw_query = inputs.get("input", "")
 
         # Contextualize the question if there is a chat history.
@@ -111,24 +111,47 @@ def build_rag_chain(
         else:
             query = raw_query
 
+        # Retrieve with scoring
         if hasattr(retriever, "similarity_search_with_score"):
-            results = retriever.similarity_search_with_score(query, k=TOP_K)
+            results = retriever.similarity_search_with_score(query, k=TOP_K * 2)
+            
+            # Apply score threshold for quality filtering
+            threshold_filtered = [
+                (doc, score) for doc, score in results 
+                if score >= RETRIEVAL_SCORE_THRESHOLD
+            ]
+            
+            # If threshold filtering removes too many, fall back to top-k
+            if len(threshold_filtered) < max(3, TOP_K // 2):
+                filtered = results[:TOP_K]
+            else:
+                filtered = threshold_filtered
+            
+            # Apply source hint prioritization
             source_hint = _find_source_hint(query)
             if source_hint:
-                results.sort(
-                    key=lambda pair: pair[0].metadata.get("source") == source_hint,
-                    reverse=True,
-                )
-            filtered = [doc for doc, score in results if score >= RETRIEVAL_SCORE_THRESHOLD]
-            if not filtered:
-                filtered = [doc for doc, _ in results]
-            docs = filtered[:TOP_K]
+                def sort_key(pair):
+                    doc, score = pair
+                    is_source_match = doc.metadata.get("source") == source_hint
+                    return (is_source_match, score)
+                filtered.sort(key=sort_key, reverse=True)
+            
+            docs = [doc for doc, _ in filtered[:TOP_K]]
+            
             if DEBUG_RETRIEVAL:
-                print("🧠 Retrieval debug:")
-                for doc, score in results[:TOP_K]:
-                    print(f"  - source={doc.metadata.get('source')} score={score:.4f}")
+                print("Retrieval debug info:")
+                print(f"   Query: {query[:100]}...")
+                print(f"   Total candidates: {len(results)}")
+                print(f"   After threshold: {len(threshold_filtered)}")
+                print(f"   Final selection: {len(docs)}")
+                for i, (doc, score) in enumerate(results[:TOP_K], 1):
+                    source = os.path.basename(doc.metadata.get("source", "?"))
+                    page = doc.metadata.get("page", "?")
+                    print(f"   [{i}] {source} (p.{page}): {score:.4f}")
+            
             return docs
 
+        # Fallback for non-scored retrievers (HybridRetriever)
         return retriever.invoke(query)
 
     qa_system_prompt = (
@@ -139,6 +162,8 @@ def build_rag_chain(
     qa_prompt = ChatPromptTemplate.from_messages([
         ("system", qa_system_prompt),
         MessagesPlaceholder("chat_history"),
+        ("system", "Use the following retrieved context to answer the question. If the answer is not contained in the context, say that you do not know.") ,
+        ("system", "CONTEXT:\n{context}"),
         ("human", "{question}"),
     ])
 
