@@ -2,7 +2,9 @@
 
 import pandas as pd
 from langchain_core.documents import Document
+from langsmith_tracing import langsmith_traceable as traceable
 
+@traceable(run_type="tool", name="load_csv")
 def load_csv(file_path: str) -> list[Document]:
     """
     Load a CSV file and convert each row to a LangChain Document.
@@ -10,6 +12,7 @@ def load_csv(file_path: str) -> list[Document]:
     df = pd.read_csv(file_path)
     return _dataframe_to_documents(df, source=file_path)
 
+@traceable(run_type="tool", name="load_excel")
 def load_excel(file_path: str) -> list[Document]:
     """
     Load an Excel file and convert each row to a LangChain Document.

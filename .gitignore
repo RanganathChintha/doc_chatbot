@@ -36,6 +36,10 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
+source.diff
+reports/
+
+
 # Unit test / coverage reports
 htmlcov/
 .tox/
@@ -50,6 +54,7 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+.vscode/
 
 # Translations
 *.mo
@@ -82,6 +87,7 @@ target/
 profile_default/
 ipython_config.py
 
+myvenv/
 # pyenv
 #   For a library or package, you might want to ignore these files since the code is
 #   intended to run in multiple environments; otherwise, check them in:
@@ -153,12 +159,16 @@ activemq-data/
 .venv
 env/
 venv/
+myvenv/
 ENV/
 env.bak/
 venv.bak/
 chroma_db/
 rag_collection/
 data/
+.streamlit/
+md/
+cache/
 
 # Spyder project settings
 .spyderproject
