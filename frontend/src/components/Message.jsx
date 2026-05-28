@@ -1,0 +1,48 @@
+import { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
+export default function Message({ message }) {
+  const isUser = message.role === 'user';
+  const [showSources, setShowSources] = useState(false);
+
+  return (
+    <div className={`msg-row ${isUser ? 'user' : 'assistant'}`}>
+      <div className="msg-avatar">{isUser ? 'U' : '✦'}</div>
+      <div className="msg-body">
+        {!isUser && <div className="msg-label">CHAT A.I+</div>}
+        <div className="msg-content">
+          {message.content ? (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+          ) : (
+            <span className="typing-dot">●</span>
+          )}
+        </div>
+        {!isUser && message.sources && message.sources.length > 0 && (
+          <div className="msg-sources">
+            <button className="sources-toggle" onClick={() => setShowSources((v) => !v)}>
+              {showSources ? '▾' : '▸'} Sources used ({message.sources.length})
+            </button>
+            {showSources && (
+              <ul className="sources-list">
+                {message.sources.map((s, i) => {
+                  const fileName = (s.source || 'unknown').split(/[\\/]/).pop();
+                  return (
+                    <li key={i} className="source-item">
+                      <div className="source-head">
+                        <span className="source-tag">{(s.source_type || '?').toUpperCase()}</span>
+                        <span className="source-name">{fileName}</span>
+                        {s.page != null && <span className="source-page">p.{s.page}</span>}
+                      </div>
+                      <div className="source-snippet">{s.snippet}{s.snippet?.length === 300 ? '…' : ''}</div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

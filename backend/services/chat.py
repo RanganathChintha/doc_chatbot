@@ -1,0 +1,94 @@
+"""SSE streaming for chat turns.
+
+Wraps the conversational RAG chain so the FastAPI route can simply
+`async for event in stream_chat(...)` and pipe events as SSE frames.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from typing import AsyncIterator
+
+from langsmith_tracing import langsmith_traceable as traceable
+
+from .indexing import state
+
+logger = logging.getLogger(__name__)
+
+
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+def _format_docs(docs: list) -> list[dict]:
+    return [
+        {
+            "source": d.metadata.get("source", ""),
+            "source_type": d.metadata.get("source_type", ""),
+            "page": d.metadata.get("page"),
+            "snippet": d.page_content[:300],
+        }
+        for d in docs
+    ]
+
+
+async def stream_chat(session_id: str, message: str) -> AsyncIterator[str]:
+    """Yield SSE-formatted frames for one chat turn.
+
+    Frames:
+        session — echoes session_id once at the start
+        token   — incremental answer text
+        sources — list of retrieved docs (one frame near the end of the stream)
+        done    — terminator
+        error   — on failure (terminator too)
+    """
+    chain = state.chain
+    if chain is None:
+        yield _sse({"type": "error", "message": "No documents indexed yet."})
+        yield _sse({"type": "done"})
+        return
+
+    yield _sse({"type": "session", "session_id": session_id})
+
+    loop = asyncio.get_event_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def emit(item):
+        loop.call_soon_threadsafe(queue.put_nowait, item)
+
+    @traceable(run_type="chain", name="chat_turn")
+    def _run_chain():
+        """Single LangSmith parent run — all downstream traceables nest under it."""
+        for chunk in chain.stream(
+            {"input": message},
+            config={"configurable": {"session_id": session_id}},
+        ):
+            emit(("chunk", chunk))
+
+    def producer():
+        try:
+            _run_chain()
+        except Exception as exc:
+            logger.exception("Chain stream failed")
+            emit(("error", str(exc)))
+        finally:
+            emit(("done", None))
+
+    loop.run_in_executor(None, producer)
+
+    while True:
+        kind, payload = await queue.get()
+        if kind == "done":
+            yield _sse({"type": "done"})
+            return
+        if kind == "error":
+            yield _sse({"type": "error", "message": payload})
+            yield _sse({"type": "done"})
+            return
+        # kind == "chunk"
+        if "answer" in payload:
+            yield _sse({"type": "token", "text": payload["answer"]})
+        if "docs" in payload:
+            yield _sse({"type": "sources", "sources": _format_docs(payload["docs"])})

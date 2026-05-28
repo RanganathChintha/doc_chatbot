@@ -1,6 +1,9 @@
 # rag/rag_chain.py
 
+import logging
 import os
+import re
+import time
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
@@ -22,18 +25,34 @@ from config import (
 )
 from langsmith_tracing import langsmith_traceable as traceable
 
+logger = logging.getLogger(__name__)
+
 os.makedirs(CACHE_DIR, exist_ok=True)
 set_llm_cache(SQLiteCache(database_path=LLM_CACHE_FILE))
 
+_SESSION_TTL = 3600  # evict sessions idle for more than 1 hour
 _session_histories: dict[str, InMemoryChatMessageHistory] = {}
+_session_last_access: dict[str, float] = {}
+
+
+def _evict_stale_sessions() -> None:
+    now = time.time()
+    stale = [sid for sid, t in _session_last_access.items() if now - t > _SESSION_TTL]
+    for sid in stale:
+        _session_histories.pop(sid, None)
+        _session_last_access.pop(sid, None)
+    if stale:
+        logger.debug("Evicted %d stale session(s)", len(stale))
 
 
 def get_session_history(session_id: str) -> BaseChatMessageHistory:
-    """Per-session window-buffer chat history."""
+    """Per-session window-buffer chat history with TTL eviction."""
+    _evict_stale_sessions()
     history = _session_histories.get(session_id)
     if history is None:
         history = InMemoryChatMessageHistory()
         _session_histories[session_id] = history
+    _session_last_access[session_id] = time.time()
     max_msgs = CHAT_HISTORY_WINDOW * 2
     if len(history.messages) > max_msgs:
         history.messages = history.messages[-max_msgs:]
@@ -42,12 +61,16 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
 
 @traceable(run_type="tool", name="get_llm")
 def get_llm() -> ChatGroq:
+    if not GROQ_API_KEY:
+        raise EnvironmentError(
+            "GROQ_API_KEY is not set. Add it to your .env file or environment."
+        )
     llm = ChatGroq(
         api_key=GROQ_API_KEY,
         model_name=LLM_MODEL,
         temperature=0.2,
     )
-    print(f"LLM loaded: {LLM_MODEL} via ChatGroq (SQLite response cache active)")
+    logger.info("LLM loaded: %s via ChatGroq (SQLite response cache active)", LLM_MODEL)
     return llm
 
 
@@ -93,6 +116,23 @@ def build_rag_chain(
     ])
     contextualize_question = contextualize_prompt | llm | StrOutputParser()
 
+    # Cheap heuristic: only pay for the extra LLM rewrite call when the query
+    # actually depends on prior turns. Saves ~1 round-trip per standalone Q.
+    _REFERENTIAL = re.compile(
+        r"\b(it|its|that|this|these|those|they|them|their|he|she|his|her|"
+        r"above|previous|earlier|same|former|latter)\b",
+        re.IGNORECASE,
+    )
+
+    def _needs_contextualization(query: str) -> bool:
+        q = query.strip()
+        if not q:
+            return False
+        # Very short queries are almost always follow-ups ("why?", "and then?").
+        if len(q.split()) <= 3:
+            return True
+        return bool(_REFERENTIAL.search(q))
+
     def _find_source_hint(query: str) -> str | None:
         normalized = query.lower()
         for source in source_names:
@@ -105,8 +145,9 @@ def build_rag_chain(
         """Enhanced retrieval with scoring, filtering, and re-ranking."""
         raw_query = inputs.get("input", "")
 
-        # Contextualize the question if there is a chat history.
-        if inputs.get("chat_history"):
+        # Contextualize only when the query actually references prior turns —
+        # avoids an extra LLM round-trip on every standalone question.
+        if inputs.get("chat_history") and _needs_contextualization(raw_query):
             query = contextualize_question.invoke(inputs)
         else:
             query = raw_query
@@ -139,15 +180,15 @@ def build_rag_chain(
             docs = [doc for doc, _ in filtered[:TOP_K]]
             
             if DEBUG_RETRIEVAL:
-                print("Retrieval debug info:")
-                print(f"   Query: {query[:100]}...")
-                print(f"   Total candidates: {len(results)}")
-                print(f"   After threshold: {len(threshold_filtered)}")
-                print(f"   Final selection: {len(docs)}")
+                logger.debug("Retrieval debug info:")
+                logger.debug("   Query: %s...", query[:100])
+                logger.debug("   Total candidates: %d", len(results))
+                logger.debug("   After threshold: %d", len(threshold_filtered))
+                logger.debug("   Final selection: %d", len(docs))
                 for i, (doc, score) in enumerate(results[:TOP_K], 1):
                     source = os.path.basename(doc.metadata.get("source", "?"))
                     page = doc.metadata.get("page", "?")
-                    print(f"   [{i}] {source} (p.{page}): {score:.4f}")
+                    logger.debug("   [%d] %s (p.%s): %.4f", i, source, page, score)
             
             return docs
 

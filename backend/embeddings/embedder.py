@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 
 # Note: HF_HUB_OFFLINE / TRANSFORMERS_OFFLINE must be set in main.py BEFORE
@@ -11,6 +12,8 @@ from langchain_classic.embeddings import CacheBackedEmbeddings
 from langchain_classic.storage import LocalFileStore
 from config import EMBEDDING_MODEL, EMBEDDING_CACHE_DIR
 from langsmith_tracing import langsmith_traceable as traceable
+
+logger = logging.getLogger(__name__)
 
 
 @traceable(run_type="tool", name="get_embedding_model")
@@ -30,5 +33,5 @@ def get_embedding_model() -> CacheBackedEmbeddings:
         store,
         namespace=EMBEDDING_MODEL.replace("/", "_"),
     )
-    print(f"Embedding model loaded locally (cached, offline): {EMBEDDING_MODEL}")
+    logger.info("Embedding model loaded locally (cached, offline): %s", EMBEDDING_MODEL)
     return cached

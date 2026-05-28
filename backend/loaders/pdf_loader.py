@@ -28,6 +28,7 @@ def extract_images_from_pdf(file_path: str) -> list[Image.Image]:
     Filters out tiny images (logos, icons) below MIN_IMAGE_DIMENSION.
     """
     images = []
+    seen_xrefs: set[int] = set()
     pdf_doc = fitz.open(file_path)
 
     for page_num in range(len(pdf_doc)):
@@ -36,6 +37,9 @@ def extract_images_from_pdf(file_path: str) -> list[Image.Image]:
 
         for img in image_list:
             xref = img[0]
+            if xref in seen_xrefs:
+                continue
+            seen_xrefs.add(xref)
             base_image = pdf_doc.extract_image(xref)
             image_bytes = base_image["image"]
 
