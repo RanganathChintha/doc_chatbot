@@ -13,7 +13,7 @@ from typing import AsyncIterator
 
 from langsmith_tracing import langsmith_traceable as traceable
 
-from .indexing import state
+from .indexing import get_state
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ async def stream_chat(session_id: str, message: str) -> AsyncIterator[str]:
         done    — terminator
         error   — on failure (terminator too)
     """
-    chain = state.chain
+    chain = get_state(session_id).chain
     if chain is None:
         yield _sse({"type": "error", "message": "No documents indexed yet."})
         yield _sse({"type": "done"})

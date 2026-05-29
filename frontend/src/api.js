@@ -2,14 +2,15 @@
 
 const BASE = '/api';
 
-export async function listFiles() {
-  const res = await fetch(`${BASE}/files`);
+export async function listFiles(sessionId) {
+  const res = await fetch(`${BASE}/files?session_id=${encodeURIComponent(sessionId)}`);
   if (!res.ok) throw new Error('Failed to load files');
   return res.json();
 }
 
-export async function uploadFiles(files) {
+export async function uploadFiles(sessionId, files) {
   const form = new FormData();
+  form.append('session_id', sessionId);
   for (const f of files) form.append('files', f);
   const res = await fetch(`${BASE}/upload`, { method: 'POST', body: form });
   if (!res.ok) {
@@ -19,8 +20,10 @@ export async function uploadFiles(files) {
   return res.json();
 }
 
-export async function clearFiles() {
-  const res = await fetch(`${BASE}/files`, { method: 'DELETE' });
+export async function clearFiles(sessionId) {
+  const res = await fetch(`${BASE}/files?session_id=${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+  });
   if (!res.ok) throw new Error('Clear failed');
   return res.json();
 }

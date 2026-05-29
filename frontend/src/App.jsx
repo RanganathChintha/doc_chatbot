@@ -13,6 +13,7 @@ function newConversation() {
     createdAt: Date.now(),
     updatedAt: Date.now(),
     messages: [], // {role, content, sources?}
+    files: [], // filenames indexed for THIS chat only
   };
 }
 
@@ -38,25 +39,34 @@ export default function App() {
     const stored = loadConversations();
     return (stored && stored[0].id) || conversations[0].id;
   });
-  const [indexedFiles, setIndexedFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState(null);
   const abortRef = useRef(null);
 
   const active = conversations.find((c) => c.id === activeId) ?? conversations[0];
+  const indexedFiles = active?.files ?? [];
 
   useEffect(() => {
     saveConversations(conversations);
   }, [conversations]);
 
-  useEffect(() => {
-    listFiles().then((d) => setIndexedFiles(d.files || [])).catch(() => {});
-  }, []);
-
   const updateConversation = useCallback((id, patch) => {
     setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch, updatedAt: Date.now() } : c)));
   }, []);
+
+  // Set a chat's file list without bumping updatedAt (refreshes shouldn't reorder).
+  const setConversationFiles = useCallback((id, files) => {
+    setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, files } : c)));
+  }, []);
+
+  // Reconcile the active chat's file list with the backend's source of truth.
+  useEffect(() => {
+    if (!activeId) return;
+    listFiles(activeId)
+      .then((d) => setConversationFiles(activeId, d.files || []))
+      .catch(() => {});
+  }, [activeId, setConversationFiles]);
 
   const onNewChat = () => {
     const c = newConversation();
@@ -77,6 +87,8 @@ export default function App() {
       if (id === activeId) setActiveId(next[0].id);
       return next;
     });
+    // Tear down this chat's server-side state: uploaded files + index, then history.
+    clearFiles(id).catch(() => {});
     resetSession(id).catch(() => {});
   };
 
@@ -90,11 +102,12 @@ export default function App() {
   const onRenameChat = (id, title) => updateConversation(id, { title: title.trim() || 'New chat' });
 
   const onUpload = async (files) => {
+    const chatId = active.id;
     setUploading(true);
     setError(null);
     try {
-      const res = await uploadFiles(files);
-      setIndexedFiles(res.indexed_files || []);
+      const res = await uploadFiles(chatId, files);
+      setConversationFiles(chatId, res.indexed_files || []);
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -103,10 +116,11 @@ export default function App() {
   };
 
   const onClearFiles = async () => {
-    if (!confirm('Remove all uploaded documents from the index?')) return;
+    if (!confirm('Remove all uploaded documents from this chat?')) return;
+    const chatId = active.id;
     try {
-      await clearFiles();
-      setIndexedFiles([]);
+      await clearFiles(chatId);
+      setConversationFiles(chatId, []);
     } catch (e) {
       setError(String(e.message || e));
     }

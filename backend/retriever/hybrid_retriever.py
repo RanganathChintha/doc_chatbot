@@ -129,6 +129,7 @@ def build_hybrid_retriever(
     chunks: list[Document] | None = None,
     k: int = TOP_K,
     use_bm25: bool = True,
+    cache_key: str | None = None,
 ) -> HybridRetriever:
     """
     Create a hybrid retriever combining semantic and keyword search.
@@ -138,13 +139,16 @@ def build_hybrid_retriever(
         chunks: Document chunks for BM25 indexing (optional)
         k: Number of results to return
         use_bm25: Whether to use BM25 in hybrid search
+        cache_key: Namespace for the BM25 disk cache. Pass the session id so
+            each chat's corpus caches separately instead of clobbering a shared
+            file.
 
     Returns:
         HybridRetriever instance
     """
     bm25_retriever = None
     if use_bm25 and chunks:
-        bm25_retriever = _load_or_build_bm25(chunks)
+        bm25_retriever = _load_or_build_bm25(chunks, cache_key)
 
     retriever = HybridRetriever(
         semantic_retriever=semantic_retriever,
@@ -157,7 +161,13 @@ def build_hybrid_retriever(
     return retriever
 
 
-_BM25_CACHE_FILE = os.path.join(CACHE_DIR, "bm25_retriever.pkl")
+def _bm25_cache_file(cache_key: str | None) -> str:
+    """Per-namespace BM25 cache path. Sanitize the key so it's a safe filename."""
+    suffix = ""
+    if cache_key:
+        safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in cache_key)
+        suffix = f"_{safe}"
+    return os.path.join(CACHE_DIR, f"bm25_retriever{suffix}.pkl")
 
 
 def _bm25_signature(chunks: list[Document]) -> int:
@@ -168,11 +178,12 @@ def _bm25_signature(chunks: list[Document]) -> int:
     return hash((len(chunks), sample))
 
 
-def _load_or_build_bm25(chunks: list[Document]) -> BM25Retriever:
+def _load_or_build_bm25(chunks: list[Document], cache_key: str | None = None) -> BM25Retriever:
+    cache_file = _bm25_cache_file(cache_key)
     signature = _bm25_signature(chunks)
-    if os.path.exists(_BM25_CACHE_FILE):
+    if os.path.exists(cache_file):
         try:
-            with open(_BM25_CACHE_FILE, "rb") as f:
+            with open(cache_file, "rb") as f:
                 cached_sig, cached_retriever = pickle.load(f)
             if cached_sig == signature:
                 logger.info("Loaded BM25 retriever from cache.")
@@ -183,7 +194,7 @@ def _load_or_build_bm25(chunks: list[Document]) -> BM25Retriever:
     retriever = BM25Retriever.from_documents(chunks)
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
-        with open(_BM25_CACHE_FILE, "wb") as f:
+        with open(cache_file, "wb") as f:
             pickle.dump((signature, retriever), f)
     except Exception as exc:
         logger.warning("BM25 cache save failed: %s", exc)
