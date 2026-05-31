@@ -10,8 +10,8 @@ import os
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_classic.embeddings import CacheBackedEmbeddings
 from langchain_classic.storage import LocalFileStore
-from config import EMBEDDING_MODEL, EMBEDDING_CACHE_DIR
-from langsmith_tracing import langsmith_traceable as traceable
+from app.config import EMBEDDING_MODEL, EMBEDDING_CACHE_DIR
+from app.langsmith_tracing import langsmith_traceable as traceable
 
 logger = logging.getLogger(__name__)
 

@@ -61,7 +61,7 @@ LANGSMITH_PROJECT_NAME=doc_chatbot # optional
 **Terminal 1 — backend** (from `backend/` so relative cache/data paths resolve correctly):
 ```bash
 cd backend
-uvicorn api:app --reload --port 8000
+uvicorn app.api:app --reload --port 8000
 ```
 
 **Terminal 2 — frontend**:

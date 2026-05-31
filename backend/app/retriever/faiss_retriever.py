@@ -9,8 +9,8 @@ from typing import Any
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 
-from config import TOP_K
-from langsmith_tracing import langsmith_traceable as traceable
+from app.config import TOP_K
+from app.langsmith_tracing import langsmith_traceable as traceable
 
 logger = logging.getLogger(__name__)
 

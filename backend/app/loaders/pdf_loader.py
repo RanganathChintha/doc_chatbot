@@ -4,7 +4,7 @@ import fitz  # PyMuPDF - for image extraction from PDF
 from PIL import Image
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
-from langsmith_tracing import langsmith_traceable as traceable
+from app.langsmith_tracing import langsmith_traceable as traceable
 import io
 
 MIN_IMAGE_DIMENSION = 100  # skip logos/icons/decorative images smaller than this

@@ -1,6 +1,7 @@
 # api.py — FastAPI routes. Business logic lives in services/.
 #
-# Run with:  uvicorn api:app --reload --port 8000
+# Run from the backend/ directory with:
+#   uvicorn app.api:app --reload --port 8000
 
 import os
 
@@ -17,10 +18,10 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from rag.rag_chain import get_session_history
-from services.chat import stream_chat
-from services.indexing import clear_session, get_state, index_files
-from services.schemas import ChatRequest, ResetRequest, UploadResponse
+from app.rag.rag_chain import get_session_history
+from app.services.chat import stream_chat
+from app.services.indexing import clear_session, get_state, index_files
+from app.services.schemas import ChatRequest, ResetRequest, UploadResponse
 
 logger = logging.getLogger(__name__)
 

@@ -3,12 +3,12 @@
 and app.py (Streamlit)."""
 
 import os
-from loaders.pdf_loader import load_pdf_text, extract_images_from_pdf
-from loaders.image_loader import load_image
-from loaders.tabular_loader import load_csv, load_excel
-from extractors.image_extractor import extract_text_from_images
-from splitter.text_splitter import split_documents
-from langsmith_tracing import langsmith_traceable as traceable
+from app.loaders.pdf_loader import load_pdf_text, extract_images_from_pdf
+from app.loaders.image_loader import load_image
+from app.loaders.tabular_loader import load_csv, load_excel
+from app.extractors.image_extractor import extract_text_from_images
+from app.splitter.text_splitter import split_documents
+from app.langsmith_tracing import langsmith_traceable as traceable
 
 
 @traceable(run_type="tool", name="load_and_chunk")

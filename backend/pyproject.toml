@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "doc-chatbot-backend"
+version = "0.1.0"
+description = "Document chatbot RAG backend (FastAPI) with per-chat document isolation."
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+# Dependencies stay pinned in requirements.txt (single source of truth);
+# editable installs (`pip install -e .`) read them from there.
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = ["app*"]

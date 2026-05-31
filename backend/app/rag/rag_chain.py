@@ -13,7 +13,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
 from langchain_core.globals import set_llm_cache
 from langchain_community.cache import SQLiteCache
-from config import (
+from app.config import (
     GROQ_API_KEY,
     LLM_MODEL,
     LLM_CACHE_FILE,
@@ -23,7 +23,7 @@ from config import (
     RETRIEVAL_SCORE_THRESHOLD,
     DEBUG_RETRIEVAL,
 )
-from langsmith_tracing import langsmith_traceable as traceable
+from app.langsmith_tracing import langsmith_traceable as traceable
 
 logger = logging.getLogger(__name__)
 

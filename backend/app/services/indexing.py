@@ -13,12 +13,12 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from config import TOP_K
-from langsmith_tracing import langsmith_traceable as traceable
-from pipeline import load_and_chunk
-from rag.rag_chain import build_rag_chain
-from retriever.faiss_retriever import MultiRetriever, build_per_source_retrievers
-from retriever.hybrid_retriever import build_hybrid_retriever
+from app.config import TOP_K
+from app.langsmith_tracing import langsmith_traceable as traceable
+from app.pipeline import load_and_chunk
+from app.rag.rag_chain import build_rag_chain
+from app.retriever.faiss_retriever import MultiRetriever, build_per_source_retrievers
+from app.retriever.hybrid_retriever import build_hybrid_retriever
 
 from .resources import embedding_model, llm
 

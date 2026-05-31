@@ -12,14 +12,8 @@ export default function ChatPane({ conversation }) {
     return (
       <div className="chat-pane empty">
         <div className="empty-hero">
-          <h1>CHAT A.I+</h1>
+          <h1>DocPilot</h1>
           <p>Upload your PDFs, images, CSVs or spreadsheets and ask anything about them.</p>
-          <ul className="suggestion-grid">
-            <li>Summarize this document</li>
-            <li>List all key entities mentioned</li>
-            <li>Compare findings across pages</li>
-            <li>Explain the chart on page 3</li>
-          </ul>
         </div>
       </div>
     );

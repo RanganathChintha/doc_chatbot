@@ -63,7 +63,7 @@ export default function Sidebar({
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
-        <div className="brand">CHAT A.I+</div>
+        <div className="brand">DocPilot</div>
       </div>
 
       <button className="new-chat-btn" onClick={onNewChat}>
@@ -170,14 +170,6 @@ export default function Sidebar({
           {indexedFiles.map((name) => (
             <div className="doc-item" key={name} title={name}>📄 {name}</div>
           ))}
-        </div>
-      </div>
-
-      <div className="sidebar-footer">
-        <button className="footer-btn">⚙ Settings</button>
-        <div className="user-card">
-          <div className="avatar">U</div>
-          <div className="user-name">You</div>
         </div>
       </div>
     </aside>

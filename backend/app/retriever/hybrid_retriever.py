@@ -12,8 +12,8 @@ from langchain_core.documents import Document
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.callbacks.manager import CallbackManagerForRetrieverRun
-from langsmith_tracing import langsmith_traceable as traceable
-from config import CACHE_DIR, DEBUG_RETRIEVAL, TOP_K
+from app.langsmith_tracing import langsmith_traceable as traceable
+from app.config import CACHE_DIR, DEBUG_RETRIEVAL, TOP_K
 
 logger = logging.getLogger(__name__)
 

@@ -6,8 +6,8 @@ network calls.
 
 from typing import Any
 
-from embeddings.embedder import get_embedding_model
-from rag.rag_chain import get_llm
+from app.embeddings.embedder import get_embedding_model
+from app.rag.rag_chain import get_llm
 
 _embedding_model: Any = None
 _llm: Any = None

@@ -4,8 +4,8 @@ import logging
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
-from langsmith_tracing import langsmith_traceable as traceable
-from config import CHUNK_SIZE, CHUNK_OVERLAP
+from app.langsmith_tracing import langsmith_traceable as traceable
+from app.config import CHUNK_SIZE, CHUNK_OVERLAP
 
 logger = logging.getLogger(__name__)
 

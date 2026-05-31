@@ -2,7 +2,7 @@
 
 import pandas as pd
 from langchain_core.documents import Document
-from langsmith_tracing import langsmith_traceable as traceable
+from app.langsmith_tracing import langsmith_traceable as traceable
 
 @traceable(run_type="tool", name="load_csv")
 def load_csv(file_path: str) -> list[Document]:

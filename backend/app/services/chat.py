@@ -11,7 +11,7 @@ import json
 import logging
 from typing import AsyncIterator
 
-from langsmith_tracing import langsmith_traceable as traceable
+from app.langsmith_tracing import langsmith_traceable as traceable
 
 from .indexing import get_state
 

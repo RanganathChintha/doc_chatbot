@@ -11,8 +11,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 from groq import Groq
 from langchain_core.documents import Document
-from config import GROQ_API_KEY, IMAGE_EXTRACTOR_MODEL, IMAGE_CACHE_FILE, CACHE_DIR
-from langsmith_tracing import langsmith_traceable as traceable
+from app.config import GROQ_API_KEY, IMAGE_EXTRACTOR_MODEL, IMAGE_CACHE_FILE, CACHE_DIR
+from app.langsmith_tracing import langsmith_traceable as traceable
 
 logger = logging.getLogger(__name__)
 

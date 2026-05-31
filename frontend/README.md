@@ -12,7 +12,7 @@ Open http://localhost:5173. Vite proxies `/api/*` → `http://localhost:8000` (c
 The backend must be running separately:
 ```bash
 cd ../backend
-uvicorn api:app --reload --port 8000
+uvicorn app.api:app --reload --port 8000
 ```
 
 ## Build (production)

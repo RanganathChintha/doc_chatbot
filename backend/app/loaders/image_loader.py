@@ -1,7 +1,7 @@
 # loaders/image_loader.py
 
 from PIL import Image
-from langsmith_tracing import langsmith_traceable as traceable
+from app.langsmith_tracing import langsmith_traceable as traceable
 
 @traceable(run_type="tool", name="load_image")
 def load_image(file_path: str) -> list[Image.Image]:
