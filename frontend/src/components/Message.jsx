@@ -10,7 +10,7 @@ export default function Message({ message }) {
     <div className={`msg-row ${isUser ? 'user' : 'assistant'}`}>
       <div className="msg-avatar">{isUser ? 'U' : '✦'}</div>
       <div className="msg-body">
-        {!isUser && <div className="msg-label">CHAT A.I+</div>}
+        {!isUser && <div className="msg-label">DocPilot</div>}
         <div className="msg-content">
           {message.content ? (
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
