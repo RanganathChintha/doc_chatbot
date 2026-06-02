@@ -96,6 +96,12 @@ def clear_files(session_id: str):
     bm25_path = Path(_bm25_cache_file(session_id))
     bm25_path.unlink(missing_ok=True)
     clear_session(session_id)
+    # Also clear the conversation history so previous uploads don't influence
+    # answers for newly uploaded files. This makes delete+upload a fresh start.
+    try:
+        get_session_history(session_id).clear()
+    except Exception:
+        logger.exception("Failed to clear session history for %s", session_id)
     return {"ok": True}
 
 

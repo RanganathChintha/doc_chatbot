@@ -47,6 +47,11 @@ def extract_images_from_pdf(file_path: str) -> list[Image.Image]:
             pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
             if pil_image.width < MIN_IMAGE_DIMENSION or pil_image.height < MIN_IMAGE_DIMENSION:
                 continue
+            # Annotate image with its source PDF page number (zero-based)
+            try:
+                pil_image.info["page"] = page_num
+            except Exception:
+                pass
             images.append(pil_image)
 
     pdf_doc.close()

@@ -122,9 +122,17 @@ def extract_text_from_image(image: Image.Image, source: str = "image") -> Docume
         cache[key] = description
         _save_cache()
 
+    metadata = {"source": source, "source_type": "image"}
+    # If the image was extracted from a PDF, include page info when available.
+    try:
+        page = image.info.get("page")
+    except Exception:
+        page = None
+    if page is not None:
+        metadata["page"] = page
     return Document(
         page_content=description,
-        metadata={"source": source, "source_type": "image"}
+        metadata=metadata,
     )
 
 
@@ -141,12 +149,23 @@ def extract_text_from_images(images: list[Image.Image], source: str = "image") -
     # Dedupe by content hash so identical images (e.g. same logo on every page)
     # only get hashed/sent once even within this call.
     unique: dict[str, Image.Image] = {}
+    pages_map: dict[str, list[int | None]] = {}
     keys_in_order: list[str] = []
     for image in images:
         key = _image_hash(image)
         keys_in_order.append(key)
         if key not in unique:
             unique[key] = image
+            # Record page occurrences for this image (may be None)
+            try:
+                pages_map[key] = [image.info.get("page")]
+            except Exception:
+                pages_map[key] = [None]
+        else:
+            try:
+                pages_map[key].append(image.info.get("page"))
+            except Exception:
+                pages_map[key].append(None)
 
     hits = sum(1 for k in unique if k in cache)
     to_fetch = [(k, img) for k, img in unique.items() if k not in cache]
@@ -175,9 +194,24 @@ def extract_text_from_images(images: list[Image.Image], source: str = "image") -
             continue
         if description.strip().upper().startswith("SKIP"):
             continue
+        # Attach page info: prefer list of pages (may include duplicates), and keep
+        # compatibility by exposing the first page as `page`.
+        pages = pages_map.get(k, [])
+        metadata = {"source": source, "source_type": "image"}
+        if pages:
+            # normalize pages: keep unique, preserve order
+            seen = []
+            for p in pages:
+                if p not in seen:
+                    seen.append(p)
+            metadata["pages"] = seen
+            # also include a single `page` key for backward compatibility
+            if seen[0] is not None:
+                metadata["page"] = seen[0]
+
         documents.append(Document(
             page_content=description,
-            metadata={"source": source, "source_type": "image"},
+            metadata=metadata,
         ))
 
     logger.info(
