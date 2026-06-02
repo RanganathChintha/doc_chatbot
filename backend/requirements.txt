@@ -15,6 +15,7 @@ pandas==3.0.3
 openpyxl==3.1.5
 python-dotenv==1.2.2
 rank-bm25==0.2.2
+certifi>=2024.12.14
 fastapi==0.118.0
 uvicorn[standard]==0.34.0
 python-multipart==0.0.20

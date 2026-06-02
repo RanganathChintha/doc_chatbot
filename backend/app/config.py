@@ -22,11 +22,11 @@ LLM_MODEL = "openai/gpt-oss-120b"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 # --- Splitter ---
-CHUNK_SIZE = 800
-CHUNK_OVERLAP = 120
+CHUNK_SIZE = 10000
+CHUNK_OVERLAP = 1000
 
 # --- Retriever ---
-TOP_K = 10
+TOP_K = 6
 RETRIEVAL_SCORE_THRESHOLD = 0.3
 DEBUG_RETRIEVAL = False
 

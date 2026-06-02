@@ -93,7 +93,7 @@ def _rebuild_chain(
     hybrid_retriever = build_hybrid_retriever(
         semantic_retriever=semantic_multi,
         chunks=all_chunks,
-        k=10,
+        k=TOP_K,
         use_bm25=True,
         cache_key=session_id,
     )

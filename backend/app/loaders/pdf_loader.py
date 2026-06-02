@@ -9,11 +9,12 @@ import io
 
 MIN_IMAGE_DIMENSION = 100  # skip logos/icons/decorative images smaller than this
 
+
 @traceable(run_type="tool", name="load_pdf_text")
 def load_pdf_text(file_path: str) -> list[Document]:
     """
     Extract text from PDF using PyPDFLoader.
-    Tags each page with source_type='text' so the retriever/LLM can distinguish.
+    Tags each page with source_type='text'.
     """
     loader = PyPDFLoader(file_path)
     pages = loader.load()

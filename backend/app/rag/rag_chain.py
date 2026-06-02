@@ -4,6 +4,8 @@ import logging
 import os
 import re
 import time
+import certifi
+import httpx
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
@@ -68,11 +70,20 @@ def get_llm() -> ChatGroq:
         raise EnvironmentError(
             "GROQ_API_KEY is not set. Add it to your .env file or environment."
         )
+    
+    # Create a custom httpx client with proper SSL certificate verification
+    # This fixes SSL certificate verification errors on Windows
+    client = httpx.Client(
+        verify=certifi.where(),
+        timeout=30.0,
+    )
+    
     llm = ChatGroq(
         api_key=GROQ_API_KEY,
         model_name=LLM_MODEL,
         temperature=0.2,
         max_retries=5,
+        http_client=client,
     )
     logger.info("LLM loaded: %s via ChatGroq (SQLite response cache active)", LLM_MODEL)
     return llm
@@ -85,13 +96,14 @@ def _format_tagged_context(docs: list[Document]) -> str:
         source = d.metadata.get("source", "?")
         source_name = os.path.basename(source) if source else "?"
         kind = "TEXT" if d.metadata.get("source_type") == "text" else "IMAGE"
-        # Prefer the human-visible page_label ("30") over the 0-indexed page int.
         page_label = d.metadata.get("page_label")
         page_raw = d.metadata.get("page")
-        if page_label is not None:
-            page_str = f" | page {page_label}"
-        elif page_raw is not None:
+        if page_raw is not None:
             page_str = f" | page {page_raw + 1}"
+            if page_label is not None:
+                page_str += f" (label {page_label})"
+        elif page_label is not None:
+            page_str = f" | page {page_label}"
         else:
             page_str = ""
         lines.append(f"[FILE: {source_name}{page_str} | {kind}] {d.page_content}")
@@ -120,20 +132,27 @@ def build_rag_chain(
       - For normal queries: pulls the top-K most related chunks overall.
       - History-aware: rewrites follow-ups into standalone questions before retrieval.
     """
-    # Build page index: (source_basename, page_label) → [chunks]
-    # page_label is the human-visible label stored by PyPDFLoader ("1", "30", …).
-    _page_index: dict[tuple[str, str], list[Document]] = {}
-    for chunk in (all_chunks or []):
-        label = str(chunk.metadata.get("page_label", ""))
-        source = os.path.basename(chunk.metadata.get("source", ""))
-        if label and source:
-            _page_index.setdefault((source, label), []).append(chunk)
+    def _page_numbers_for_chunk(chunk: Document) -> list[str]:
+        labels: list[str] = []
+        page_raw = chunk.metadata.get("page")
+        if page_raw is not None and page_raw != "":
+            try:
+                raw_num = int(page_raw)
+                labels.append(str(raw_num + 1))
+                labels.append(str(raw_num))
+            except (TypeError, ValueError):
+                labels.append(str(page_raw).strip())
+        return [label for label in dict.fromkeys(labels) if label]
 
-    # Also build a label→chunks index ignoring source, for single-doc sessions.
+    # Build page index: (source_basename, raw_page_number) → [chunks]
+    _page_index: dict[tuple[str, str], list[Document]] = {}
     _page_label_index: dict[str, list[Document]] = {}
     for chunk in (all_chunks or []):
-        label = str(chunk.metadata.get("page_label", ""))
-        if label:
+        labels = _page_numbers_for_chunk(chunk)
+        source = os.path.basename(chunk.metadata.get("source", ""))
+        for label in labels:
+            if source:
+                _page_index.setdefault((source, label), []).append(chunk)
             _page_label_index.setdefault(label, []).append(chunk)
     contextualize_prompt = ChatPromptTemplate.from_messages([
         ("system",
