@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -45,16 +46,33 @@ class IndexState:
 # in a worker thread (`asyncio.to_thread`) while requests may touch the registry
 # concurrently.
 _sessions: dict[str, IndexState] = {}
+_session_last_access: dict[str, float] = {}
 _lock = threading.Lock()
+
+# Evict index states idle for more than 2 hours — mirrors the chat-history TTL
+# and prevents unbounded RAM growth as users create chats and upload files.
+_INDEX_TTL = 7200
+
+
+def _evict_stale_sessions() -> None:
+    now = time.time()
+    stale = [sid for sid, t in _session_last_access.items() if now - t > _INDEX_TTL]
+    for sid in stale:
+        _sessions.pop(sid, None)
+        _session_last_access.pop(sid, None)
+    if stale:
+        logger.debug("Evicted %d stale index session(s)", len(stale))
 
 
 def get_state(session_id: str) -> IndexState:
     """Return the session's IndexState, creating an empty one on first use."""
     with _lock:
+        _evict_stale_sessions()
         st = _sessions.get(session_id)
         if st is None:
             st = IndexState()
             _sessions[session_id] = st
+        _session_last_access[session_id] = time.time()
         return st
 
 
@@ -62,6 +80,7 @@ def clear_session(session_id: str) -> None:
     """Drop a session's index entirely (used on chat delete / file clear)."""
     with _lock:
         _sessions.pop(session_id, None)
+        _session_last_access.pop(session_id, None)
 
 
 @traceable(run_type="chain", name="rebuild_rag_chain")
@@ -83,7 +102,7 @@ def _rebuild_chain(
         for d in all_chunks
         if d.metadata.get("source")
     })
-    state.chain = build_rag_chain(hybrid_retriever, source_names, llm())
+    state.chain = build_rag_chain(hybrid_retriever, source_names, llm(), all_chunks)
     state.semantic_retriever = semantic_multi
 
 

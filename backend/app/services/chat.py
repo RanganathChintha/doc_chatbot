@@ -67,12 +67,26 @@ async def stream_chat(session_id: str, message: str) -> AsyncIterator[str]:
         ):
             emit(("chunk", chunk))
 
+    def _user_facing_error(exc: Exception) -> str:
+        """Return a clean, safe message for the frontend — no internal stack details."""
+        msg = str(exc)
+        if "429" in msg or "rate_limit" in msg.lower() or "rate limit" in msg.lower():
+            return (
+                "Groq rate limit reached. The model is receiving too many requests. "
+                "Please wait a moment and try again."
+            )
+        if "401" in msg or "authentication" in msg.lower():
+            return "API authentication failed. Check your GROQ_API_KEY."
+        if "503" in msg or "unavailable" in msg.lower():
+            return "The AI service is temporarily unavailable. Please try again shortly."
+        return "Something went wrong while generating a response. Please try again."
+
     def producer():
         try:
             _run_chain()
         except Exception as exc:
-            logger.exception("Chain stream failed")
-            emit(("error", str(exc)))
+            logger.error("Chain stream failed: %s", exc)
+            emit(("error", _user_facing_error(exc)))
         finally:
             emit(("done", None))
 

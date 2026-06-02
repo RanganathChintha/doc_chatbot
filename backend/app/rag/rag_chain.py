@@ -27,6 +27,9 @@ from app.langsmith_tracing import langsmith_traceable as traceable
 
 logger = logging.getLogger(__name__)
 
+# Compiled once at import time, not per chain build.
+_PAGE_RE = re.compile(r'\b(?:page|pg|p\.?)\s*(\d+)\b', re.IGNORECASE)
+
 os.makedirs(CACHE_DIR, exist_ok=True)
 set_llm_cache(SQLiteCache(database_path=LLM_CACHE_FILE))
 
@@ -69,20 +72,28 @@ def get_llm() -> ChatGroq:
         api_key=GROQ_API_KEY,
         model_name=LLM_MODEL,
         temperature=0.2,
+        max_retries=5,
     )
     logger.info("LLM loaded: %s via ChatGroq (SQLite response cache active)", LLM_MODEL)
     return llm
 
 
 def _format_tagged_context(docs: list[Document]) -> str:
-    """Tag each chunk with [FILE: filename | TYPE] so the LLM can answer per file."""
+    """Tag each chunk with [FILE: filename | page N | TYPE] so the LLM can cite pages."""
     lines = []
     for d in docs:
         source = d.metadata.get("source", "?")
         source_name = os.path.basename(source) if source else "?"
         kind = "TEXT" if d.metadata.get("source_type") == "text" else "IMAGE"
-        page = d.metadata.get("page")
-        page_str = f" p.{page}" if page is not None else ""
+        # Prefer the human-visible page_label ("30") over the 0-indexed page int.
+        page_label = d.metadata.get("page_label")
+        page_raw = d.metadata.get("page")
+        if page_label is not None:
+            page_str = f" | page {page_label}"
+        elif page_raw is not None:
+            page_str = f" | page {page_raw + 1}"
+        else:
+            page_str = ""
         lines.append(f"[FILE: {source_name}{page_str} | {kind}] {d.page_content}")
     return "\n\n".join(lines)
 
@@ -92,6 +103,7 @@ def build_rag_chain(
     retriever,
     source_names: list[str],
     llm: ChatGroq,
+    all_chunks: list[Document] | None = None,
 ):
     """
     Conversational RAG chain with global top-K retrieval.
@@ -100,11 +112,29 @@ def build_rag_chain(
         retriever: global FAISS store over all chunks
         source_names: all source file paths in the indexed corpus
         llm: ChatGroq instance
+        all_chunks: flat list of every indexed chunk — used for direct page lookup
+            so "what's on page 30?" bypasses vector search and hits the right chunks.
 
     Behavior:
+      - For page-specific queries: returns all chunks from that page directly.
       - For normal queries: pulls the top-K most related chunks overall.
       - History-aware: rewrites follow-ups into standalone questions before retrieval.
     """
+    # Build page index: (source_basename, page_label) → [chunks]
+    # page_label is the human-visible label stored by PyPDFLoader ("1", "30", …).
+    _page_index: dict[tuple[str, str], list[Document]] = {}
+    for chunk in (all_chunks or []):
+        label = str(chunk.metadata.get("page_label", ""))
+        source = os.path.basename(chunk.metadata.get("source", ""))
+        if label and source:
+            _page_index.setdefault((source, label), []).append(chunk)
+
+    # Also build a label→chunks index ignoring source, for single-doc sessions.
+    _page_label_index: dict[str, list[Document]] = {}
+    for chunk in (all_chunks or []):
+        label = str(chunk.metadata.get("page_label", ""))
+        if label:
+            _page_label_index.setdefault(label, []).append(chunk)
     contextualize_prompt = ChatPromptTemplate.from_messages([
         ("system",
          "Given the chat history and the latest user question, rewrite the "
@@ -133,6 +163,11 @@ def build_rag_chain(
             return True
         return bool(_REFERENTIAL.search(q))
 
+    def _find_page_hint(query: str) -> str | None:
+        """Return the page label string if the query mentions a specific page number."""
+        m = _PAGE_RE.search(query)
+        return m.group(1) if m else None
+
     def _find_source_hint(query: str) -> str | None:
         normalized = query.lower()
         for source in source_names:
@@ -151,6 +186,21 @@ def build_rag_chain(
             query = contextualize_question.invoke(inputs)
         else:
             query = raw_query
+
+        # --- Direct page lookup (bypasses vector search entirely) ---
+        page_label = _find_page_hint(query)
+        if page_label and _page_index:
+            source_hint = _find_source_hint(query)
+            page_chunks: list[Document] = []
+            if source_hint:
+                source_base = os.path.basename(source_hint)
+                page_chunks = _page_index.get((source_base, page_label), [])
+            if not page_chunks:
+                # No source match — fall back to all chunks with that label.
+                page_chunks = _page_label_index.get(page_label, [])
+            if page_chunks:
+                logger.debug("Page lookup: label=%s → %d chunk(s)", page_label, len(page_chunks))
+                return page_chunks
 
         # Retrieve with scoring
         if hasattr(retriever, "similarity_search_with_score"):
@@ -196,8 +246,11 @@ def build_rag_chain(
         return retriever.invoke(query)
 
     qa_system_prompt = (
-        "Answer using only the context. Do not hallucinate. "
-        "If unavailable, say so. Cite sources. Be concise."
+        "Answer using only the context provided. Do not hallucinate. "
+        "Each context chunk is tagged with [FILE: filename | page N | TYPE]. "
+        "When the user asks about a specific page, use the chunks from that page. "
+        "If the requested page has no content in the context, say so explicitly. "
+        "Cite the file and page number in your answer. Be concise."
     )
 
     qa_prompt = ChatPromptTemplate.from_messages([

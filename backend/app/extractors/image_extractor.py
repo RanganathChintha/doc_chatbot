@@ -22,13 +22,15 @@ if not GROQ_API_KEY:
         "Add it to your .env file to enable image analysis."
     )
 
-groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+# max_retries=0 — we handle failures ourselves and don't want the SDK to
+# silently retry and amplify 429s when many images are processed in parallel.
+groq_client = Groq(api_key=GROQ_API_KEY, max_retries=0) if GROQ_API_KEY else None
 
 _cache_lock = threading.Lock()
 _cache: dict[str, str] | None = None
 
-# Parallelism for image VLM calls. Groq tolerates this comfortably; tune if rate-limited.
-_MAX_WORKERS = 8
+# Keep parallelism low to avoid blowing through the per-minute token budget.
+_MAX_WORKERS = 2
 
 
 def _load_cache() -> dict[str, str]:

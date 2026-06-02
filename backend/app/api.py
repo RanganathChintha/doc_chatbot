@@ -21,6 +21,7 @@ from fastapi.responses import StreamingResponse
 from app.rag.rag_chain import get_session_history
 from app.services.chat import stream_chat
 from app.services.indexing import clear_session, get_state, index_files
+from app.retriever.hybrid_retriever import _bm25_cache_file
 from app.services.schemas import ChatRequest, ResetRequest, UploadResponse
 
 logger = logging.getLogger(__name__)
@@ -86,11 +87,14 @@ async def upload(session_id: str = Form(...), files: list[UploadFile] = File(...
 
 @app.delete("/files")
 def clear_files(session_id: str):
-    """Remove a single session's uploaded files and drop its index."""
+    """Remove a single session's uploaded files, index, and cache artifacts."""
     dest_dir = UPLOAD_DIR / "".join(
         ch if ch.isalnum() or ch in "-_" else "_" for ch in session_id
     )
     shutil.rmtree(dest_dir, ignore_errors=True)
+    # Clean up the per-session BM25 cache file so cache/ doesn't grow unbounded.
+    bm25_path = Path(_bm25_cache_file(session_id))
+    bm25_path.unlink(missing_ok=True)
     clear_session(session_id)
     return {"ok": True}
 
