@@ -4,9 +4,7 @@ import logging
 import os
 import re
 import time
-import certifi
-import httpx
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
@@ -16,7 +14,8 @@ from langchain_core.documents import Document
 from langchain_core.globals import set_llm_cache
 from langchain_community.cache import SQLiteCache
 from app.config import (
-    GROQ_API_KEY,
+    SIEMENS_API_KEY,
+    SIEMENS_API_BASE,
     LLM_MODEL,
     LLM_CACHE_FILE,
     CACHE_DIR,
@@ -65,27 +64,22 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
 
 
 @traceable(run_type="tool", name="get_llm")
-def get_llm() -> ChatGroq:
-    if not GROQ_API_KEY:
+def get_llm() -> ChatOpenAI:
+    if not SIEMENS_API_KEY:
         raise EnvironmentError(
-            "GROQ_API_KEY is not set. Add it to your .env file or environment."
+            "Siemens API key not set. Ensure OPENAI_API_KEY is in your .env or environment."
         )
-    
-    # Create a custom httpx client with proper SSL certificate verification
-    # This fixes SSL certificate verification errors on Windows
-    client = httpx.Client(
-        verify=certifi.where(),
-        timeout=30.0,
-    )
-    
-    llm = ChatGroq(
-        api_key=GROQ_API_KEY,
+
+    # Use LangChain's ChatOpenAI configured to point at the Siemens OpenAI-compatible endpoint.
+    # This keeps LangSmith tracing intact while swapping the transport.
+    llm = ChatOpenAI(
         model_name=LLM_MODEL,
         temperature=0.2,
         max_retries=5,
-        http_client=client,
+        openai_api_key=SIEMENS_API_KEY,
+        openai_api_base=SIEMENS_API_BASE,
     )
-    logger.info("LLM loaded: %s via ChatGroq (SQLite response cache active)", LLM_MODEL)
+    logger.info("LLM loaded: %s via ChatOpenAI (SQLite response cache active)", LLM_MODEL)
     return llm
 
 
@@ -114,7 +108,7 @@ def _format_tagged_context(docs: list[Document]) -> str:
 def build_rag_chain(
     retriever,
     source_names: list[str],
-    llm: ChatGroq,
+    llm: ChatOpenAI,
     all_chunks: list[Document] | None = None,
 ):
     """
@@ -123,7 +117,7 @@ def build_rag_chain(
     Args:
         retriever: global FAISS store over all chunks
         source_names: all source file paths in the indexed corpus
-        llm: ChatGroq instance
+        llm: ChatOpenAI instance (Siemens-configured)
         all_chunks: flat list of every indexed chunk — used for direct page lookup
             so "what's on page 30?" bypasses vector search and hits the right chunks.
 

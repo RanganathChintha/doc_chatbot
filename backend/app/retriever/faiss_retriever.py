@@ -28,22 +28,32 @@ def build_per_source_retrievers(
         by_source:  {source_path -> list[Document]} — chunks grouped by file,
                     used to rebuild BM25 / answer per-file context queries.
     """
+    logger.info("build_per_source_retrievers: building for %d chunk(s)", len(chunks))
     by_source: dict[str, list[Document]] = defaultdict(list)
     for c in chunks:
         by_source[c.metadata.get("source", "unknown")].append(c)
+    logger.debug("build_per_source_retrievers: organized into %d source(s)", len(by_source))
 
     retrievers: dict = {}
-    for source, source_chunks in by_source.items():
+    for i, (source, source_chunks) in enumerate(by_source.items(), 1):
         k = min(k_per_source, len(source_chunks))
         if k == 0:
+            logger.debug("Skipping source with 0 chunks: %s", source)
             continue
-        store = FAISS.from_documents(source_chunks, embedding_model)
-        retrievers[source] = store.as_retriever(
-            search_type="similarity",
-            search_kwargs={"k": k},
-        )
+        logger.debug("Building FAISS for source %d/%d: %s (%d chunks)...", i, len(by_source), source, len(source_chunks))
+        try:
+            store = FAISS.from_documents(source_chunks, embedding_model)
+            logger.debug("FAISS built for %s", source)
+            retrievers[source] = store.as_retriever(
+                search_type="similarity",
+                search_kwargs={"k": k},
+            )
+            logger.debug("Retriever ready for %s", source)
+        except Exception as e:
+            logger.error("Failed to build FAISS for %s: %s", source, e, exc_info=True)
+            raise
 
-    logger.info("Per-file retrievers ready: %d file(s), top-%d per file.", len(retrievers), k_per_source)
+    logger.info("build_per_source_retrievers: complete - %d file(s), top-%d per file", len(retrievers), k_per_source)
     return retrievers, dict(by_source)
 
 

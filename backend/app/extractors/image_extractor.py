@@ -7,30 +7,41 @@ import json
 import logging
 import os
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from PIL import Image
-from groq import Groq
+from openai import OpenAI, APITimeoutError
 from langchain_core.documents import Document
-from app.config import GROQ_API_KEY, IMAGE_EXTRACTOR_MODEL, IMAGE_CACHE_FILE, CACHE_DIR
+from app.config import SIEMENS_API_KEY, SIEMENS_API_BASE, IMAGE_EXTRACTOR_MODEL, IMAGE_CACHE_FILE, CACHE_DIR
 from app.langsmith_tracing import langsmith_traceable as traceable
 
 logger = logging.getLogger(__name__)
 
-if not GROQ_API_KEY:
+vlm_client = None
+if SIEMENS_API_KEY:
+    try:
+        # Initialize with explicit timeout to prevent hanging on slow responses
+        vlm_client = OpenAI(api_key=SIEMENS_API_KEY, base_url=SIEMENS_API_BASE, timeout=60.0)
+        logger.info("VLM client initialized with Siemens API (base_url=%s, timeout=60s)", SIEMENS_API_BASE)
+    except Exception as e:
+        logger.error("Failed to initialize VLM client: %s", e)
+        vlm_client = None
+else:
     logger.warning(
-        "GROQ_API_KEY is not set — image extraction will be skipped. "
+        "Siemens API key (OPENAI_API_KEY) is not set — image extraction will be skipped. "
         "Add it to your .env file to enable image analysis."
     )
-
-# max_retries=0 — we handle failures ourselves and don't want the SDK to
-# silently retry and amplify 429s when many images are processed in parallel.
-groq_client = Groq(api_key=GROQ_API_KEY, max_retries=0) if GROQ_API_KEY else None
 
 _cache_lock = threading.Lock()
 _cache: dict[str, str] | None = None
 
-# Keep parallelism low to avoid blowing through the per-minute token budget.
-_MAX_WORKERS = 2
+# Parallelism for image extraction — process multiple images concurrently
+# Higher parallelism speeds up extraction but watch rate limits
+_MAX_WORKERS = 8
+
+# Resize and compress images before sending to the VLM.
+# This dramatically reduces request payload size and improves latency.
+MAX_IMAGE_DIMENSION = 1024
+JPEG_QUALITY = 72
 
 
 def _load_cache() -> dict[str, str]:
@@ -65,11 +76,30 @@ def pil_image_to_base64(image: Image.Image) -> str:
     return base64.b64encode(buffer.read()).decode("utf-8")
 
 
+def _prepare_image_bytes(image: Image.Image) -> bytes:
+    image = image.convert("RGB")
+    width, height = image.size
+    if max(width, height) > MAX_IMAGE_DIMENSION:
+        scale = MAX_IMAGE_DIMENSION / max(width, height)
+        new_size = (int(width * scale), int(height * scale))
+        resample = getattr(Image, "Resampling", Image).LANCZOS
+        image = image.resize(new_size, resample)
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+    return buffer.getvalue()
+
+
 def _call_vlm(image: Image.Image, source: str) -> str | None:
     """Single VLM round-trip. Returns the description text, or None on failure."""
+    if vlm_client is None:
+        logger.debug("VLM client is None, skipping image extraction for %s", source)
+        return None
+    
     try:
-        base64_image = pil_image_to_base64(image)
-        response = groq_client.chat.completions.create(
+        logger.debug("Calling VLM for image from %s with model %s", source, IMAGE_EXTRACTOR_MODEL)
+        image_bytes = _prepare_image_bytes(image)
+        base64_image = base64.b64encode(image_bytes).decode("utf-8")
+        response = vlm_client.chat.completions.create(
             model=IMAGE_EXTRACTOR_MODEL,
             messages=[
                 {
@@ -94,11 +124,71 @@ def _call_vlm(image: Image.Image, source: str) -> str | None:
                     ]
                 }
             ],
-            max_tokens=256
+            temperature=0.0,
+            max_tokens=120,
+            timeout=30.0,
         )
-        return response.choices[0].message.content
+        result = response.choices[0].message.content
+        # Normalize the VLM content to a plain string. Different backends
+        # may return a string, a list of content blocks, or a nested dict.
+        def _ensure_str(content) -> str:
+            if content is None:
+                return ""
+            if isinstance(content, str):
+                return content
+            # List of content blocks (common in multimodal responses)
+            if isinstance(content, list):
+                parts: list[str] = []
+                for block in content:
+                    if isinstance(block, str):
+                        parts.append(block)
+                    elif isinstance(block, dict):
+                        # Common shapes: {"type":"text","text":"..."}
+                        text = block.get("text") or block.get("value") or block.get("content")
+                        if isinstance(text, str):
+                            parts.append(text)
+                        else:
+                            # Try nested fields
+                            if "message" in block and isinstance(block["message"], dict):
+                                msg_text = block["message"].get("text")
+                                if isinstance(msg_text, str):
+                                    parts.append(msg_text)
+                if parts:
+                    return "\n".join(parts)
+                # Fallback to JSON serialization
+                try:
+                    return json.dumps(content, ensure_ascii=False)
+                except Exception:
+                    return str(content)
+            # Dict fallback
+            if isinstance(content, dict):
+                # Common: {"type":"output","text":"..."} or nested
+                text = content.get("text") or content.get("value") or content.get("content")
+                if isinstance(text, str):
+                    return text
+                # Try common nested keys
+                for k in ("message", "output", "choices"):
+                    v = content.get(k)
+                    if isinstance(v, str):
+                        return v
+                    if isinstance(v, dict):
+                        t = v.get("text")
+                        if isinstance(t, str):
+                            return t
+                try:
+                    return json.dumps(content, ensure_ascii=False)
+                except Exception:
+                    return str(content)
+            return str(content)
+
+        result_str = _ensure_str(result)
+        logger.debug("VLM response received for %s: %s", source, result_str[:200] if result_str else None)
+        return result_str
+    except (APITimeoutError, FuturesTimeoutError) as e:
+        logger.error("VLM API timeout for %s (taking >50s): %s", source, e)
+        return None
     except Exception as exc:
-        logger.warning("Image extraction failed for %s: %s", source, exc)
+        logger.error("Image extraction failed for %s: %s", source, exc, exc_info=True)
         return None
 
 
@@ -109,7 +199,7 @@ def extract_text_from_image(image: Image.Image, source: str = "image") -> Docume
     Kept for callers that handle one image at a time; for bulk work prefer
     extract_text_from_images() which parallelizes.
     """
-    if groq_client is None:
+    if vlm_client is None:
         return None
 
     cache = _load_cache()
@@ -138,8 +228,8 @@ def extract_text_from_image(image: Image.Image, source: str = "image") -> Docume
 
 @traceable(run_type="tool", name="extract_text_from_images")
 def extract_text_from_images(images: list[Image.Image], source: str = "image") -> list[Document]:
-    if groq_client is None:
-        logger.info("Skipping image extraction (no GROQ_API_KEY).")
+    if vlm_client is None:
+        logger.info("Skipping image extraction (no Siemens API key / OPENAI_API_KEY).")
         return []
     if not images:
         return []

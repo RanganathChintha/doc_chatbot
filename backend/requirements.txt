@@ -19,3 +19,4 @@ certifi>=2024.12.14
 fastapi==0.118.0
 uvicorn[standard]==0.34.0
 python-multipart==0.0.20
+langchain-openai

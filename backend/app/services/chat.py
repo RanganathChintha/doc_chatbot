@@ -72,11 +72,11 @@ async def stream_chat(session_id: str, message: str) -> AsyncIterator[str]:
         msg = str(exc)
         if "429" in msg or "rate_limit" in msg.lower() or "rate limit" in msg.lower():
             return (
-                "Groq rate limit reached. The model is receiving too many requests. "
+                "Service rate limit reached. The model is receiving too many requests. "
                 "Please wait a moment and try again."
             )
         if "401" in msg or "authentication" in msg.lower():
-            return "API authentication failed. Check your GROQ_API_KEY."
+            return "API authentication failed. Check your OPENAI_API_KEY (Siemens key)."
         if "503" in msg or "unavailable" in msg.lower():
             return "The AI service is temporarily unavailable. Please try again shortly."
         return "Something went wrong while generating a response. Please try again."

@@ -14,11 +14,13 @@ logging.basicConfig(
 
 # --- API Keys ---
 # Note: LangSmith config lives entirely in langsmith_tracing.py.
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# Siemens API key: stored in the environment variable named OPENAI_API_KEY
+SIEMENS_API_KEY = os.getenv("OPENAI_API_KEY")
+SIEMENS_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.siemens.com/llm/v1")
 
 # --- Model Names ---
-IMAGE_EXTRACTOR_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
-LLM_MODEL = "openai/gpt-oss-120b"
+IMAGE_EXTRACTOR_MODEL = "pixtral-12b-2409"
+LLM_MODEL = "gpt-oss-120b-onprem"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 # --- Splitter ---

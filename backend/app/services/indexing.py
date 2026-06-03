@@ -112,30 +112,46 @@ def index_files(session_id: str, paths: list[Path]) -> int:
 
     Returns the number of new chunks added.
     """
+    logger.info("index_files: session=%s, %d path(s)", session_id, len(paths))
     state = get_state(session_id)
     new_paths = [p for p in paths if p.name not in state.indexed_files]
     if not new_paths:
+        logger.info("index_files: no new paths to index")
         return 0
+    logger.info("index_files: indexing %d new file(s)", len(new_paths))
 
+    logger.debug("index_files: calling load_and_chunk...")
     new_chunks = load_and_chunk([str(p) for p in new_paths], verbose=False)
+    logger.info("index_files: load_and_chunk returned %d chunk(s)", len(new_chunks))
     if not new_chunks:
+        logger.info("index_files: no chunks returned")
         return 0
 
+    logger.debug("index_files: building retrievers with embedding_model...")
     new_retrievers, new_by_source = build_per_source_retrievers(
         new_chunks, embedding_model(), k_per_source=TOP_K,
     )
+    logger.info("index_files: built %d retriever(s), %d source(s)", len(new_retrievers), len(new_by_source))
 
     if state.semantic_retriever is None:
+        logger.debug("index_files: creating new MultiRetriever")
         semantic_multi = MultiRetriever(new_retrievers)
     else:
+        logger.debug("index_files: adding retrievers to existing MultiRetriever")
         semantic_multi = state.semantic_retriever
         semantic_multi.add_retrievers(new_retrievers)
+    logger.debug("index_files: MultiRetriever updated")
 
     state.by_source.update(new_by_source)
     all_chunks: list = []
     for docs in state.by_source.values():
         all_chunks.extend(docs)
+    logger.info("index_files: total chunks now: %d", len(all_chunks))
 
+    logger.debug("index_files: building RAG chain...")
     _rebuild_chain(session_id, state, all_chunks, semantic_multi)
+    logger.info("index_files: RAG chain built")
+    
     state.indexed_files.extend(p.name for p in new_paths)
+    logger.info("index_files: complete, added %d chunk(s)", len(new_chunks))
     return len(new_chunks)
