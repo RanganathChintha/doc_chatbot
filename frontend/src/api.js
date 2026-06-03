@@ -28,6 +28,19 @@ export async function clearFiles(sessionId) {
   return res.json();
 }
 
+export async function deleteFile(sessionId, filename) {
+  const res = await fetch(
+    `${BASE}/file?session_id=${encodeURIComponent(sessionId)}&filename=${encodeURIComponent(filename)}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) throw new Error('Delete failed');
+  return res.json();
+}
+
+export function thumbnailUrl(sessionId, filename) {
+  return `${BASE}/thumbnail?session_id=${encodeURIComponent(sessionId)}&filename=${encodeURIComponent(filename)}`;
+}
+
 export async function resetSession(sessionId) {
   const res = await fetch(`${BASE}/reset`, {
     method: 'POST',

@@ -52,8 +52,8 @@ async def stream_chat(session_id: str, message: str) -> AsyncIterator[str]:
 
     yield _sse({"type": "session", "session_id": session_id})
 
-    loop = asyncio.get_event_loop()
-    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=256)
 
     def emit(item):
         loop.call_soon_threadsafe(queue.put_nowait, item)

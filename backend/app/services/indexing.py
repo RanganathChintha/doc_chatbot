@@ -1,24 +1,27 @@
 """Per-session index state + incremental document ingestion.
 
-Each chat session owns an isolated `IndexState` (its own FAISS / hybrid
+Each chat session owns an isolated IndexState (its own FAISS store / hybrid
 retriever / RAG chain) so one chat's uploaded files are never retrievable by
-another. All mutation goes through `index_files` / `clear_session`, keyed by
-`session_id`.
+another. All mutation goes through index_files / clear_session, keyed by
+session_id.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 import time
 from pathlib import Path
 from typing import Any
 
+from langchain_community.vectorstores import FAISS
+
 from app.config import TOP_K
 from app.langsmith_tracing import langsmith_traceable as traceable
 from app.pipeline import load_and_chunk
 from app.rag.rag_chain import build_rag_chain
-from app.retriever.faiss_retriever import MultiRetriever, build_per_source_retrievers
+from app.retriever.faiss_retriever import build_merged_faiss, group_chunks_by_source
 from app.retriever.hybrid_retriever import build_hybrid_retriever
 
 from .resources import embedding_model, llm
@@ -26,31 +29,43 @@ from .resources import embedding_model, llm
 logger = logging.getLogger(__name__)
 
 
+def _file_hash(path: Path) -> str:
+    """MD5 fingerprint of file content for deduplication (not security)."""
+    h = hashlib.md5(usedforsecurity=False)
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(65536), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
 class IndexState:
     """Mutable view of what a single session currently has indexed."""
 
     def __init__(self) -> None:
         self.chain: Any = None
-        self.semantic_retriever: MultiRetriever | None = None
+        self.faiss_store: FAISS | None = None
         self.by_source: dict[str, list] = {}
         self.indexed_files: list[str] = []
+        self.indexed_file_hashes: set[str] = set()
+        self.filename_to_hash: dict[str, str] = {}
 
     def clear(self) -> None:
         self.chain = None
-        self.semantic_retriever = None
+        self.faiss_store = None
         self.by_source = {}
         self.indexed_files = []
+        self.indexed_file_hashes = set()
+        self.filename_to_hash = {}
 
 
 # Registry of per-session index states. Guarded by a lock because uploads run
-# in a worker thread (`asyncio.to_thread`) while requests may touch the registry
+# in a worker thread (asyncio.to_thread) while requests may touch the registry
 # concurrently.
 _sessions: dict[str, IndexState] = {}
 _session_last_access: dict[str, float] = {}
 _lock = threading.Lock()
 
-# Evict index states idle for more than 2 hours — mirrors the chat-history TTL
-# and prevents unbounded RAM growth as users create chats and upload files.
+# Evict index states idle for more than 2 hours.
 _INDEX_TTL = 7200
 
 
@@ -67,7 +82,6 @@ def _evict_stale_sessions() -> None:
 def get_state(session_id: str) -> IndexState:
     """Return the session's IndexState, creating an empty one on first use."""
     with _lock:
-        _evict_stale_sessions()
         st = _sessions.get(session_id)
         if st is None:
             st = IndexState()
@@ -84,14 +98,9 @@ def clear_session(session_id: str) -> None:
 
 
 @traceable(run_type="chain", name="rebuild_rag_chain")
-def _rebuild_chain(
-    session_id: str,
-    state: IndexState,
-    all_chunks: list,
-    semantic_multi: MultiRetriever,
-) -> None:
+def _rebuild_chain(session_id: str, state: IndexState, all_chunks: list) -> None:
     hybrid_retriever = build_hybrid_retriever(
-        semantic_retriever=semantic_multi,
+        semantic_retriever=state.faiss_store,
         chunks=all_chunks,
         k=TOP_K,
         use_bm25=True,
@@ -103,55 +112,84 @@ def _rebuild_chain(
         if d.metadata.get("source")
     })
     state.chain = build_rag_chain(hybrid_retriever, source_names, llm(), all_chunks)
-    state.semantic_retriever = semantic_multi
 
 
 @traceable(run_type="chain", name="ingest_pipeline")
 def index_files(session_id: str, paths: list[Path]) -> int:
     """Incrementally index newly-uploaded files into a session's own index.
 
-    Returns the number of new chunks added.
+    Files already indexed (by content hash, not just name) are skipped so
+    re-uploading the same file is a no-op. Returns the number of new chunks added.
     """
     logger.info("index_files: session=%s, %d path(s)", session_id, len(paths))
     state = get_state(session_id)
-    new_paths = [p for p in paths if p.name not in state.indexed_files]
+
+    # Hash-based dedup: identical content is skipped even if the filename differs.
+    path_hashes = {p: _file_hash(p) for p in paths}
+    new_paths = [p for p in paths if path_hashes[p] not in state.indexed_file_hashes]
     if not new_paths:
         logger.info("index_files: no new paths to index")
         return 0
     logger.info("index_files: indexing %d new file(s)", len(new_paths))
 
-    logger.debug("index_files: calling load_and_chunk...")
     new_chunks = load_and_chunk([str(p) for p in new_paths], verbose=False)
     logger.info("index_files: load_and_chunk returned %d chunk(s)", len(new_chunks))
     if not new_chunks:
-        logger.info("index_files: no chunks returned")
         return 0
 
-    logger.debug("index_files: building retrievers with embedding_model...")
-    new_retrievers, new_by_source = build_per_source_retrievers(
-        new_chunks, embedding_model(), k_per_source=TOP_K,
-    )
-    logger.info("index_files: built %d retriever(s), %d source(s)", len(new_retrievers), len(new_by_source))
-
-    if state.semantic_retriever is None:
-        logger.debug("index_files: creating new MultiRetriever")
-        semantic_multi = MultiRetriever(new_retrievers)
+    em = embedding_model()
+    if state.faiss_store is None:
+        logger.debug("index_files: building merged FAISS store")
+        state.faiss_store = build_merged_faiss(new_chunks, em)
     else:
-        logger.debug("index_files: adding retrievers to existing MultiRetriever")
-        semantic_multi = state.semantic_retriever
-        semantic_multi.add_retrievers(new_retrievers)
-    logger.debug("index_files: MultiRetriever updated")
+        logger.debug("index_files: adding %d chunk(s) to existing FAISS store", len(new_chunks))
+        state.faiss_store.add_documents(new_chunks)
 
-    state.by_source.update(new_by_source)
+    new_by_source = group_chunks_by_source(new_chunks)
+    for source, chunks in new_by_source.items():
+        state.by_source.setdefault(source, []).extend(chunks)
+
     all_chunks: list = []
     for docs in state.by_source.values():
         all_chunks.extend(docs)
-    logger.info("index_files: total chunks now: %d", len(all_chunks))
+    logger.info("index_files: total chunks: %d", len(all_chunks))
 
-    logger.debug("index_files: building RAG chain...")
-    _rebuild_chain(session_id, state, all_chunks, semantic_multi)
-    logger.info("index_files: RAG chain built")
-    
+    _rebuild_chain(session_id, state, all_chunks)
+
     state.indexed_files.extend(p.name for p in new_paths)
+    state.indexed_file_hashes.update(path_hashes[p] for p in new_paths)
+    for p in new_paths:
+        state.filename_to_hash[p.name] = path_hashes[p]
     logger.info("index_files: complete, added %d chunk(s)", len(new_chunks))
     return len(new_chunks)
+
+
+def remove_file(session_id: str, filename: str) -> None:
+    """Remove one file from a session's index and rebuild the retriever.
+
+    Embeddings are disk-cached so rebuilding FAISS after removal is cheap —
+    no VLM or embedding API calls are made for already-indexed content.
+    """
+    state = get_state(session_id)
+
+    sources_to_remove = [s for s in state.by_source if Path(s).name == filename]
+    if not sources_to_remove:
+        return
+
+    for src in sources_to_remove:
+        del state.by_source[src]
+
+    state.indexed_files = [f for f in state.indexed_files if f != filename]
+    h = state.filename_to_hash.pop(filename, None)
+    if h:
+        state.indexed_file_hashes.discard(h)
+
+    if not state.by_source:
+        state.chain = None
+        state.faiss_store = None
+        return
+
+    all_chunks = [c for docs in state.by_source.values() for c in docs]
+    state.faiss_store = build_merged_faiss(all_chunks, embedding_model())
+    _rebuild_chain(session_id, state, all_chunks)
+    logger.info("remove_file: rebuilt index after removing %s (%d chunks remain)", filename, len(all_chunks))

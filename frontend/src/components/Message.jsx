@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-export default function Message({ message }) {
+const Message = memo(function Message({ message }) {
   const isUser = message.role === 'user';
   const [showSources, setShowSources] = useState(false);
 
@@ -45,4 +45,6 @@ export default function Message({ message }) {
       </div>
     </div>
   );
-}
+});
+
+export default Message;

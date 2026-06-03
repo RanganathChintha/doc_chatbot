@@ -56,17 +56,23 @@ def load_excel(file_path: str) -> list[Document]:
     df = pd.read_excel(file_path)
     return _dataframe_to_documents(df, source=file_path)
 
+_ROWS_PER_DOC = 25  # batch size: keeps embedding count low while preserving context
+
+
 def _dataframe_to_documents(df: pd.DataFrame, source: str) -> list[Document]:
-    """
-    Convert a DataFrame to a list of LangChain Document objects.
-    Each row becomes one document with all column values as text.
+    """Convert a DataFrame to Documents, batching rows to reduce embedding count.
+
+    25 rows per document means a 1,000-row CSV produces 40 embeddings instead of 1,000.
+    Rows within a batch stay together in retrieval, giving the LLM useful context.
     """
     documents = []
-    for idx, row in df.iterrows():
-        content = "\n".join([f"{col}: {val}" for col, val in row.items()])
-        doc = Document(
-            page_content=content,
-            metadata={"source": source, "row": idx}
-        )
-        documents.append(doc)
+    for start in range(0, len(df), _ROWS_PER_DOC):
+        batch = df.iloc[start : start + _ROWS_PER_DOC]
+        lines = []
+        for idx, row in batch.iterrows():
+            lines.append(f"[Row {idx}] " + " | ".join(f"{col}: {val}" for col, val in row.items()))
+        documents.append(Document(
+            page_content="\n".join(lines),
+            metadata={"source": source, "row_start": int(batch.index[0]), "row_end": int(batch.index[-1])},
+        ))
     return documents

@@ -22,7 +22,7 @@ export default function ChatPane({ conversation }) {
   return (
     <div className="chat-pane">
       {conversation.messages.map((m, i) => (
-        <Message key={i} message={m} />
+        <Message key={m.id ?? i} message={m} />
       ))}
       <div ref={endRef} />
     </div>

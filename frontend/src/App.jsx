@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import ChatPane from './components/ChatPane.jsx';
 import InputBox from './components/InputBox.jsx';
-import { chatStream, listFiles, resetSession, uploadFiles, clearFiles } from './api.js';
+import { chatStream, listFiles, resetSession, uploadFiles, clearFiles, deleteFile } from './api.js';
 
 const STORAGE_KEY = 'doc_chatbot.conversations.v1';
 
@@ -126,6 +126,16 @@ export default function App() {
     }
   };
 
+  const onDeleteFile = async (filename) => {
+    const chatId = active.id;
+    try {
+      const res = await deleteFile(chatId, filename);
+      setConversationFiles(chatId, res.indexed_files || []);
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
   const onSend = async (text) => {
     const trimmed = text.trim();
     if (!trimmed || streaming) return;
@@ -135,8 +145,8 @@ export default function App() {
     }
 
     setError(null);
-    const userMsg = { role: 'user', content: trimmed };
-    const assistantMsg = { role: 'assistant', content: '', sources: [] };
+    const userMsg = { id: crypto.randomUUID(), role: 'user', content: trimmed };
+    const assistantMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', sources: [] };
 
     // Snapshot active conversation; auto-title from first user message.
     const nextMessages = [...active.messages, userMsg, assistantMsg];
@@ -179,6 +189,7 @@ export default function App() {
       <Sidebar
         conversations={conversations}
         activeId={activeId}
+        sessionId={active?.id}
         indexedFiles={indexedFiles}
         uploading={uploading}
         onNewChat={onNewChat}
@@ -188,6 +199,7 @@ export default function App() {
         onClearAll={onClearAll}
         onUpload={onUpload}
         onClearFiles={onClearFiles}
+        onDeleteFile={onDeleteFile}
       />
       <main className="main-pane">
         <div className="main-inner">

@@ -38,6 +38,10 @@ _cache: dict[str, str] | None = None
 # Higher parallelism speeds up extraction but watch rate limits
 _MAX_WORKERS = 8
 
+# Keep at most this many entries in the on-disk image cache.
+# Oldest entries (by insertion order, Python 3.7+ dict) are dropped first.
+_MAX_CACHE_SIZE = 1000
+
 # Resize and compress images before sending to the VLM.
 # This dramatically reduces request payload size and improves latency.
 MAX_IMAGE_DIMENSION = 1024
@@ -51,7 +55,15 @@ def _load_cache() -> dict[str, str]:
     os.makedirs(CACHE_DIR, exist_ok=True)
     if os.path.exists(IMAGE_CACHE_FILE):
         with open(IMAGE_CACHE_FILE, "r", encoding="utf-8") as f:
-            _cache = json.load(f)
+            loaded: dict[str, str] = json.load(f)
+        # Evict oldest entries when the cache exceeds the size limit.
+        if len(loaded) > _MAX_CACHE_SIZE:
+            keys = list(loaded.keys())
+            loaded = {k: loaded[k] for k in keys[-_MAX_CACHE_SIZE:]}
+            _cache = loaded
+            _save_cache()
+        else:
+            _cache = loaded
     else:
         _cache = {}
     return _cache
@@ -67,13 +79,6 @@ def _image_hash(image: Image.Image) -> str:
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG")
     return hashlib.sha256(buffer.getvalue()).hexdigest()
-
-
-def pil_image_to_base64(image: Image.Image) -> str:
-    buffer = io.BytesIO()
-    image.save(buffer, format="JPEG")
-    buffer.seek(0)
-    return base64.b64encode(buffer.read()).decode("utf-8")
 
 
 def _prepare_image_bytes(image: Image.Image) -> bytes:
@@ -190,40 +195,6 @@ def _call_vlm(image: Image.Image, source: str) -> str | None:
     except Exception as exc:
         logger.error("Image extraction failed for %s: %s", source, exc, exc_info=True)
         return None
-
-
-@traceable(run_type="tool", name="extract_text_from_image")
-def extract_text_from_image(image: Image.Image, source: str = "image") -> Document | None:
-    """
-    Summarize a single image via the VLM, with on-disk caching by image hash.
-    Kept for callers that handle one image at a time; for bulk work prefer
-    extract_text_from_images() which parallelizes.
-    """
-    if vlm_client is None:
-        return None
-
-    cache = _load_cache()
-    key = _image_hash(image)
-    description = cache.get(key)
-    if description is None:
-        description = _call_vlm(image, source)
-        if description is None:
-            return None
-        cache[key] = description
-        _save_cache()
-
-    metadata = {"source": source, "source_type": "image"}
-    # If the image was extracted from a PDF, include page info when available.
-    try:
-        page = image.info.get("page")
-    except Exception:
-        page = None
-    if page is not None:
-        metadata["page"] = page
-    return Document(
-        page_content=description,
-        metadata=metadata,
-    )
 
 
 @traceable(run_type="tool", name="extract_text_from_images")

@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { thumbnailUrl } from '../api.js';
 
 function groupByTime(convs) {
   const now = Date.now();
@@ -15,9 +16,51 @@ function groupByTime(convs) {
   return groups;
 }
 
+const FILE_TYPE_STYLES = {
+  pdf:  { bg: '#fee2e2', color: '#dc2626', label: 'PDF' },
+  csv:  { bg: '#dcfce7', color: '#16a34a', label: 'CSV' },
+  xlsx: { bg: '#dcfce7', color: '#16a34a', label: 'XLS' },
+  xls:  { bg: '#dcfce7', color: '#16a34a', label: 'XLS' },
+};
+
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'bmp', 'tiff']);
+const THUMB_EXTS = new Set(['pdf', 'png', 'jpg', 'jpeg', 'bmp', 'tiff']);
+
+function DocThumbnail({ sessionId, name }) {
+  const ext = name.split('.').pop().toLowerCase();
+  const [failed, setFailed] = useState(false);
+
+  if (THUMB_EXTS.has(ext) && !failed) {
+    return (
+      <img
+        className="doc-thumb"
+        src={thumbnailUrl(sessionId, name)}
+        alt=""
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+
+  const style = FILE_TYPE_STYLES[ext];
+  if (style) {
+    return (
+      <span className="doc-thumb-badge" style={{ background: style.bg, color: style.color }}>
+        {style.label}
+      </span>
+    );
+  }
+  // generic image fallback
+  return (
+    <span className="doc-thumb-badge" style={{ background: '#f0eefc', color: '#4b40c5' }}>
+      IMG
+    </span>
+  );
+}
+
 export default function Sidebar({
   conversations,
   activeId,
+  sessionId,
   indexedFiles,
   uploading,
   onNewChat,
@@ -27,6 +70,7 @@ export default function Sidebar({
   onClearAll,
   onUpload,
   onClearFiles,
+  onDeleteFile,
 }) {
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState(null);
@@ -118,20 +162,14 @@ export default function Sidebar({
                     <button
                       className="icon-btn"
                       title="Rename"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        startEdit(c);
-                      }}
+                      onClick={(e) => { e.stopPropagation(); startEdit(c); }}
                     >
                       ✎
                     </button>
                     <button
                       className="icon-btn"
                       title="Delete"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteChat(c.id);
-                      }}
+                      onClick={(e) => { e.stopPropagation(); onDeleteChat(c.id); }}
                     >
                       🗑
                     </button>
@@ -148,7 +186,7 @@ export default function Sidebar({
         <div className="docs-head">
           <span>Documents</span>
           {indexedFiles.length > 0 && (
-            <button className="link-btn" onClick={onClearFiles}>Clear</button>
+            <button className="link-btn" onClick={onClearFiles}>Clear all</button>
           )}
         </div>
         <button
@@ -168,7 +206,17 @@ export default function Sidebar({
         />
         <div className="docs-list">
           {indexedFiles.map((name) => (
-            <div className="doc-item" key={name} title={name}>📄 {name}</div>
+            <div className="doc-item" key={name} title={name}>
+              <DocThumbnail sessionId={sessionId} name={name} />
+              <span className="doc-name">{name}</span>
+              <button
+                className="doc-del"
+                title="Remove file"
+                onClick={() => onDeleteFile(name)}
+              >
+                ×
+              </button>
+            </div>
           ))}
         </div>
       </div>

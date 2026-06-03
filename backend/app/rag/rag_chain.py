@@ -30,13 +30,30 @@ logger = logging.getLogger(__name__)
 
 # Compiled once at import time, not per chain build.
 _PAGE_RE = re.compile(r'\b(?:page|pg|p\.?)\s*(\d+)\b', re.IGNORECASE)
+_REFERENTIAL = re.compile(
+    r"\b(it|its|that|this|these|those|they|them|their|he|she|his|her|"
+    r"above|previous|earlier|same|former|latter)\b",
+    re.IGNORECASE,
+)
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 set_llm_cache(SQLiteCache(database_path=LLM_CACHE_FILE))
 
 _SESSION_TTL = 3600  # evict sessions idle for more than 1 hour
-_session_histories: dict[str, InMemoryChatMessageHistory] = {}
+_session_histories: dict[str, "InMemoryChatMessageHistory"] = {}
 _session_last_access: dict[str, float] = {}
+
+_MAX_HISTORY_MSGS = CHAT_HISTORY_WINDOW * 2  # user+assistant pairs
+
+
+class _BoundedHistory(InMemoryChatMessageHistory):
+    """Chat history that trims on add rather than on every read access."""
+    max_messages: int = _MAX_HISTORY_MSGS
+
+    def add_message(self, message) -> None:  # type: ignore[override]
+        super().add_message(message)
+        if len(self.messages) > self.max_messages:
+            self.messages = self.messages[-self.max_messages:]
 
 
 def _evict_stale_sessions() -> None:
@@ -50,16 +67,12 @@ def _evict_stale_sessions() -> None:
 
 
 def get_session_history(session_id: str) -> BaseChatMessageHistory:
-    """Per-session window-buffer chat history with TTL eviction."""
-    _evict_stale_sessions()
+    """Per-session bounded chat history with TTL eviction (eviction runs in background)."""
     history = _session_histories.get(session_id)
     if history is None:
-        history = InMemoryChatMessageHistory()
+        history = _BoundedHistory()
         _session_histories[session_id] = history
     _session_last_access[session_id] = time.time()
-    max_msgs = CHAT_HISTORY_WINDOW * 2
-    if len(history.messages) > max_msgs:
-        history.messages = history.messages[-max_msgs:]
     return history
 
 
@@ -69,9 +82,6 @@ def get_llm() -> ChatOpenAI:
         raise EnvironmentError(
             "Siemens API key not set. Ensure OPENAI_API_KEY is in your .env or environment."
         )
-
-    # Use LangChain's ChatOpenAI configured to point at the Siemens OpenAI-compatible endpoint.
-    # This keeps LangSmith tracing intact while swapping the transport.
     llm = ChatOpenAI(
         model_name=LLM_MODEL,
         temperature=0.2,
@@ -104,6 +114,10 @@ def _format_tagged_context(docs: list[Document]) -> str:
     return "\n\n".join(lines)
 
 
+# Max number of distinct queries cached per chain instance (one per session).
+_RETRIEVAL_CACHE_SIZE = 32
+
+
 @traceable(run_type="chain", name="build_rag_chain")
 def build_rag_chain(
     retriever,
@@ -115,16 +129,10 @@ def build_rag_chain(
     Conversational RAG chain with global top-K retrieval.
 
     Args:
-        retriever: global FAISS store over all chunks
+        retriever: HybridRetriever wrapping the merged FAISS store
         source_names: all source file paths in the indexed corpus
         llm: ChatOpenAI instance (Siemens-configured)
         all_chunks: flat list of every indexed chunk — used for direct page lookup
-            so "what's on page 30?" bypasses vector search and hits the right chunks.
-
-    Behavior:
-      - For page-specific queries: returns all chunks from that page directly.
-      - For normal queries: pulls the top-K most related chunks overall.
-      - History-aware: rewrites follow-ups into standalone questions before retrieval.
     """
     def _page_numbers_for_chunk(chunk: Document) -> list[str]:
         labels: list[str] = []
@@ -138,7 +146,7 @@ def build_rag_chain(
                 labels.append(str(page_raw).strip())
         return [label for label in dict.fromkeys(labels) if label]
 
-    # Build page index: (source_basename, raw_page_number) → [chunks]
+    # Build page index: (source_basename, page_label) → [chunks]
     _page_index: dict[tuple[str, str], list[Document]] = {}
     _page_label_index: dict[str, list[Document]] = {}
     for chunk in (all_chunks or []):
@@ -148,6 +156,7 @@ def build_rag_chain(
             if source:
                 _page_index.setdefault((source, label), []).append(chunk)
             _page_label_index.setdefault(label, []).append(chunk)
+
     contextualize_prompt = ChatPromptTemplate.from_messages([
         ("system",
          "Given the chat history and the latest user question, rewrite the "
@@ -159,25 +168,15 @@ def build_rag_chain(
     ])
     contextualize_question = contextualize_prompt | llm | StrOutputParser()
 
-    # Cheap heuristic: only pay for the extra LLM rewrite call when the query
-    # actually depends on prior turns. Saves ~1 round-trip per standalone Q.
-    _REFERENTIAL = re.compile(
-        r"\b(it|its|that|this|these|those|they|them|their|he|she|his|her|"
-        r"above|previous|earlier|same|former|latter)\b",
-        re.IGNORECASE,
-    )
-
     def _needs_contextualization(query: str) -> bool:
         q = query.strip()
         if not q:
             return False
-        # Very short queries are almost always follow-ups ("why?", "and then?").
         if len(q.split()) <= 3:
             return True
         return bool(_REFERENTIAL.search(q))
 
     def _find_page_hint(query: str) -> str | None:
-        """Return the page label string if the query mentions a specific page number."""
         m = _PAGE_RE.search(query)
         return m.group(1) if m else None
 
@@ -189,12 +188,15 @@ def build_rag_chain(
                 return source
         return None
 
+    # Per-chain LRU cache for retrieval results (keyed by effective query string).
+    # Each chain instance is per-session and is rebuilt when new files are indexed,
+    # so the cache is naturally invalidated on corpus changes.
+    _retrieval_cache: dict[str, list[Document]] = {}
+
     def _get_docs(inputs: dict) -> list[Document]:
-        """Enhanced retrieval with scoring, filtering, and re-ranking."""
+        """Retrieval with page-hint shortcut, hybrid search, and result caching."""
         raw_query = inputs.get("input", "")
 
-        # Contextualize only when the query actually references prior turns —
-        # avoids an extra LLM round-trip on every standalone question.
         if inputs.get("chat_history") and _needs_contextualization(raw_query):
             query = contextualize_question.invoke(inputs)
         else:
@@ -209,54 +211,55 @@ def build_rag_chain(
                 source_base = os.path.basename(source_hint)
                 page_chunks = _page_index.get((source_base, page_label), [])
             if not page_chunks:
-                # No source match — fall back to all chunks with that label.
                 page_chunks = _page_label_index.get(page_label, [])
             if page_chunks:
                 logger.debug("Page lookup: label=%s → %d chunk(s)", page_label, len(page_chunks))
                 return page_chunks
 
-        # Retrieve with scoring
+        # --- Query cache (skips vector + BM25 search for repeated queries) ---
+        if query in _retrieval_cache:
+            logger.debug("Retrieval cache hit for query: %s...", query[:60])
+            return _retrieval_cache[query]
+
+        # RETRIEVAL_SCORE_THRESHOLD applies when the retriever exposes scored results.
+        # The HybridRetriever is a BaseRetriever (no similarity_search_with_score),
+        # so the scored path below is reserved for direct FAISS store usage.
         if hasattr(retriever, "similarity_search_with_score"):
             results = retriever.similarity_search_with_score(query, k=TOP_K * 2)
-            
-            # Apply score threshold for quality filtering
+
+            # FAISS default uses L2 distance (lower = more similar, range ~0–2 for unit
+            # vectors). RETRIEVAL_SCORE_THRESHOLD should be calibrated accordingly.
             threshold_filtered = [
-                (doc, score) for doc, score in results 
+                (doc, score) for doc, score in results
                 if score >= RETRIEVAL_SCORE_THRESHOLD
             ]
-            
-            # If threshold filtering removes too many, fall back to top-k
             if len(threshold_filtered) < max(3, TOP_K // 2):
                 filtered = results[:TOP_K]
             else:
                 filtered = threshold_filtered
-            
-            # Apply source hint prioritization
+
             source_hint = _find_source_hint(query)
             if source_hint:
                 def sort_key(pair):
                     doc, score = pair
-                    is_source_match = doc.metadata.get("source") == source_hint
-                    return (is_source_match, score)
+                    return (doc.metadata.get("source") == source_hint, score)
                 filtered.sort(key=sort_key, reverse=True)
-            
+
             docs = [doc for doc, _ in filtered[:TOP_K]]
-            
+
             if DEBUG_RETRIEVAL:
-                logger.debug("Retrieval debug info:")
-                logger.debug("   Query: %s...", query[:100])
-                logger.debug("   Total candidates: %d", len(results))
-                logger.debug("   After threshold: %d", len(threshold_filtered))
-                logger.debug("   Final selection: %d", len(docs))
+                logger.debug("Retrieval debug — query: %s...", query[:100])
                 for i, (doc, score) in enumerate(results[:TOP_K], 1):
                     source = os.path.basename(doc.metadata.get("source", "?"))
-                    page = doc.metadata.get("page", "?")
-                    logger.debug("   [%d] %s (p.%s): %.4f", i, source, page, score)
-            
-            return docs
+                    logger.debug("  [%d] %s p.%s score=%.4f", i, source, doc.metadata.get("page", "?"), score)
+        else:
+            docs = retriever.invoke(query)
 
-        # Fallback for non-scored retrievers (HybridRetriever)
-        return retriever.invoke(query)
+        # Store in cache, evicting the oldest entry when full.
+        if len(_retrieval_cache) >= _RETRIEVAL_CACHE_SIZE:
+            _retrieval_cache.pop(next(iter(_retrieval_cache)))
+        _retrieval_cache[query] = docs
+        return docs
 
     qa_system_prompt = (
         "Answer using only the context provided. Do not hallucinate. "
@@ -269,7 +272,7 @@ def build_rag_chain(
     qa_prompt = ChatPromptTemplate.from_messages([
         ("system", qa_system_prompt),
         MessagesPlaceholder("chat_history"),
-        ("system", "Use the following retrieved context to answer the question. If the answer is not contained in the context, say that you do not know.") ,
+        ("system", "Use the following retrieved context to answer the question. If the answer is not contained in the context, say that you do not know."),
         ("system", "CONTEXT:\n{context}"),
         ("human", "{question}"),
     ])
