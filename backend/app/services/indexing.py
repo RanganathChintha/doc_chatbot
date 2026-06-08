@@ -19,7 +19,7 @@ from langchain_community.vectorstores import FAISS
 
 from app.config import TOP_K
 from app.langsmith_tracing import langsmith_traceable as traceable
-from app.pipeline import load_and_chunk
+from app.pipeline import load_and_chunk, load_urls_and_chunk
 from app.rag.rag_chain import build_rag_chain
 from app.retriever.faiss_retriever import build_merged_faiss, group_chunks_by_source
 from app.retriever.hybrid_retriever import build_hybrid_retriever
@@ -48,6 +48,7 @@ class IndexState:
         self.indexed_files: list[str] = []
         self.indexed_file_hashes: set[str] = set()
         self.filename_to_hash: dict[str, str] = {}
+        self.indexed_url_signatures: dict[str, str] = {}
 
     def clear(self) -> None:
         self.chain = None
@@ -56,6 +57,7 @@ class IndexState:
         self.indexed_files = []
         self.indexed_file_hashes = set()
         self.filename_to_hash = {}
+        self.indexed_url_signatures = {}
 
 
 # Registry of per-session index states. Guarded by a lock because uploads run
@@ -162,6 +164,85 @@ def index_files(session_id: str, paths: list[Path]) -> int:
         state.filename_to_hash[p.name] = path_hashes[p]
     logger.info("index_files: complete, added %d chunk(s)", len(new_chunks))
     return len(new_chunks)
+
+
+@traceable(run_type="chain", name="index_urls")
+def index_urls(
+    session_id: str,
+    urls: list[str],
+    allow_domains: list[str] | None = None,
+    max_depth: int | None = 2,
+    max_pages: int | None = 20,
+    auth_cookies: dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
+    render_javascript: bool = False,
+    render_timeout: int = 30,
+) -> int:
+    """Index authenticated URLs as a session's own web corpus.
+
+    Re-crawled pages are compared by content signature. Unchanged pages are
+    skipped, while changed pages replace their previous chunks before the
+    retriever is rebuilt.
+    """
+    logger.info("index_urls: session=%s, %d url(s)", session_id, len(urls))
+    state = get_state(session_id)
+
+    raw_chunks = load_urls_and_chunk(
+        urls,
+        allow_domains=allow_domains,
+        max_depth=max_depth,
+        max_pages=max_pages,
+        auth_cookies=auth_cookies,
+        headers=headers,
+        render_javascript=render_javascript,
+        render_timeout=render_timeout,
+    )
+    logger.info("index_urls: load_urls_and_chunk returned %d chunk(s)", len(raw_chunks))
+    if not raw_chunks:
+        return 0
+
+    grouped_chunks = group_chunks_by_source(raw_chunks)
+    changed_by_source = {
+        source: chunks
+        for source, chunks in grouped_chunks.items()
+        if chunks
+        and chunks[0].metadata.get("signature")
+        != state.indexed_url_signatures.get(source)
+    }
+    if not changed_by_source:
+        logger.info("index_urls: no changed urls to index")
+        return 0
+
+    for source in changed_by_source:
+        state.by_source.pop(source, None)
+
+    changed_chunks = [
+        chunk
+        for chunks in changed_by_source.values()
+        for chunk in chunks
+    ]
+
+    em = embedding_model()
+    for source, chunks in changed_by_source.items():
+        state.by_source[source] = chunks
+
+    all_chunks: list = []
+    for docs in state.by_source.values():
+        all_chunks.extend(docs)
+    logger.info("index_urls: total chunks: %d", len(all_chunks))
+
+    state.faiss_store = build_merged_faiss(all_chunks, em)
+    _rebuild_chain(session_id, state, all_chunks)
+
+    for source, chunks in changed_by_source.items():
+        signature = chunks[0].metadata.get("signature")
+        if signature:
+            state.indexed_url_signatures[source] = signature
+        if source not in state.indexed_files:
+            state.indexed_files.append(source)
+
+    logger.info("index_urls: complete, added/updated %d chunk(s)", len(changed_chunks))
+    return len(changed_chunks)
 
 
 def remove_file(session_id: str, filename: str) -> None:

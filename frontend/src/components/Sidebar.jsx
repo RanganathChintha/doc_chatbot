@@ -63,18 +63,25 @@ export default function Sidebar({
   sessionId,
   indexedFiles,
   uploading,
+  crawling,
   onNewChat,
   onSelectChat,
   onDeleteChat,
   onRenameChat,
   onClearAll,
   onUpload,
+  onCrawl,
   onClearFiles,
   onDeleteFile,
 }) {
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editingText, setEditingText] = useState('');
+  const [crawlUrl, setCrawlUrl] = useState('');
+  const [renderJavascript, setRenderJavascript] = useState(true);
+  const [fullSite, setFullSite] = useState(true);
+  const [maxDepth, setMaxDepth] = useState(1);
+  const [maxPages, setMaxPages] = useState(5);
   const fileRef = useRef(null);
 
   const filtered = useMemo(() => {
@@ -91,6 +98,23 @@ export default function Sidebar({
     const files = Array.from(e.target.files || []);
     if (files.length > 0) onUpload(files);
     e.target.value = '';
+  };
+
+  const submitCrawl = (e) => {
+    e.preventDefault();
+    const urls = crawlUrl
+      .split(/\s+/)
+      .map((url) => url.trim())
+      .filter(Boolean);
+    if (urls.length === 0) return;
+    onCrawl({
+      urls,
+      fullSite,
+      maxDepth,
+      maxPages,
+      renderJavascript,
+      renderTimeout: 30,
+    });
   };
 
   const startEdit = (c) => {
@@ -204,6 +228,61 @@ export default function Sidebar({
           style={{ display: 'none' }}
           onChange={onFilePick}
         />
+        <form className="crawl-form" onSubmit={submitCrawl}>
+          <textarea
+            className="crawl-input"
+            rows={2}
+            placeholder="Paste internal URL"
+            value={crawlUrl}
+            onChange={(e) => setCrawlUrl(e.target.value)}
+            disabled={crawling}
+          />
+          <div className="crawl-controls">
+            <label className="crawl-toggle">
+              <input
+                type="checkbox"
+                checked={renderJavascript}
+                onChange={(e) => setRenderJavascript(e.target.checked)}
+                disabled={crawling}
+              />
+              Render JS
+            </label>
+            <label className="crawl-toggle">
+              <input
+                type="checkbox"
+                checked={fullSite}
+                onChange={(e) => setFullSite(e.target.checked)}
+                disabled={crawling}
+              />
+              Full site
+            </label>
+            <label className="crawl-number">
+              Depth
+              <input
+                type="number"
+                min="0"
+                max="5"
+                value={maxDepth}
+                onChange={(e) => setMaxDepth(Number(e.target.value))}
+                disabled={crawling || fullSite}
+              />
+            </label>
+            <label className="crawl-number">
+              Pages
+              <input
+                type="number"
+                min="1"
+                max="50"
+                value={maxPages}
+                onChange={(e) => setMaxPages(Number(e.target.value))}
+                disabled={crawling || fullSite}
+              />
+            </label>
+          </div>
+          <button className="crawl-btn" type="submit" disabled={crawling || !crawlUrl.trim()}>
+            {crawling ? 'Crawling...' : 'Crawl URL'}
+          </button>
+        </form>
         <div className="docs-list">
           {indexedFiles.map((name) => (
             <div className="doc-item" key={name} title={name}>

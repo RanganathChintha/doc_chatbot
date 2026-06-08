@@ -7,6 +7,7 @@ import os
 from app.loaders.pdf_loader import load_pdf_text, extract_images_from_pdf
 from app.loaders.image_loader import load_image
 from app.loaders.tabular_loader import load_csv, load_excel
+from app.loaders.url_loader import load_url_documents
 from app.extractors.image_extractor import extract_text_from_images
 from app.splitter.text_splitter import split_documents
 from app.langsmith_tracing import langsmith_traceable as traceable
@@ -52,4 +53,34 @@ def load_and_chunk(input_files: list[str], verbose: bool = True):
     logger.info("load_and_chunk: %d doc(s) total, splitting...", len(all_documents))
     chunked = split_documents(all_documents)
     logger.info("load_and_chunk: %d chunk(s) produced", len(chunked))
+    return chunked
+
+
+@traceable(run_type="tool", name="load_urls_and_chunk")
+def load_urls_and_chunk(
+    urls: list[str],
+    allow_domains: list[str] | None = None,
+    max_depth: int | None = 2,
+    max_pages: int | None = 20,
+    auth_cookies: dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
+    render_javascript: bool = False,
+    render_timeout: int = 30,
+):
+    logger.info("load_urls_and_chunk: starting with %d URL(s)", len(urls))
+    documents = load_url_documents(
+        urls,
+        allow_domains=allow_domains,
+        max_depth=max_depth,
+        max_pages=max_pages,
+        auth_cookies=auth_cookies,
+        headers=headers,
+        render_javascript=render_javascript,
+        render_timeout=render_timeout,
+    )
+    logger.info("load_urls_and_chunk: fetched %d page(s)", len(documents))
+    for doc in documents:
+        doc.metadata.setdefault("source_type", "web")
+    chunked = split_documents(documents)
+    logger.info("load_urls_and_chunk: %d chunk(s) produced", len(chunked))
     return chunked

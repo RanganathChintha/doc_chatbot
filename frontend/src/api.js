@@ -20,6 +20,27 @@ export async function uploadFiles(sessionId, files) {
   return res.json();
 }
 
+export async function crawlUrls(sessionId, options) {
+  const res = await fetch(`${BASE}/crawl`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_id: sessionId,
+      urls: options.urls,
+      allow_domains: options.allowDomains || null,
+      max_depth: options.fullSite ? null : options.maxDepth,
+      max_pages: options.fullSite ? null : options.maxPages,
+      render_javascript: options.renderJavascript,
+      render_timeout: options.renderTimeout,
+    }),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(t || 'Crawl failed');
+  }
+  return res.json();
+}
+
 export async function clearFiles(sessionId) {
   const res = await fetch(`${BASE}/files?session_id=${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',

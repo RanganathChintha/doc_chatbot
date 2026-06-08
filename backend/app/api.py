@@ -26,9 +26,9 @@ from fastapi.responses import Response, StreamingResponse
 
 from app.rag.rag_chain import get_session_history
 from app.services.chat import stream_chat
-from app.services.indexing import clear_session, get_state, index_files, remove_file
+from app.services.indexing import clear_session, get_state, index_files, index_urls, remove_file
 from app.retriever.hybrid_retriever import _bm25_cache_file
-from app.services.schemas import ChatRequest, ResetRequest, UploadResponse
+from app.services.schemas import ChatRequest, ResetRequest, UrlCrawlRequest, UploadResponse
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +199,30 @@ async def upload(session_id: str = Form(...), files: list[UploadFile] = File(...
 
     return UploadResponse(
         indexed_files=get_state(session_id).indexed_files, new_chunks=new_chunks
+    )
+
+
+@app.post("/crawl", response_model=UploadResponse)
+async def crawl_urls(req: UrlCrawlRequest):
+    try:
+        new_chunks = await asyncio.to_thread(
+            index_urls,
+            req.session_id,
+            req.urls,
+            req.allow_domains,
+            req.max_depth,
+            req.max_pages,
+            req.auth_cookies,
+            req.headers,
+            req.render_javascript,
+            req.render_timeout,
+        )
+    except Exception as exc:
+        logger.exception("URL indexing failed")
+        raise HTTPException(status_code=500, detail=f"URL indexing failed: {exc}")
+
+    return UploadResponse(
+        indexed_files=get_state(req.session_id).indexed_files, new_chunks=new_chunks
     )
 
 

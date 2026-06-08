@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import ChatPane from './components/ChatPane.jsx';
 import InputBox from './components/InputBox.jsx';
-import { chatStream, listFiles, resetSession, uploadFiles, clearFiles, deleteFile } from './api.js';
+import { chatStream, crawlUrls, listFiles, resetSession, uploadFiles, clearFiles, deleteFile } from './api.js';
 
 const STORAGE_KEY = 'doc_chatbot.conversations.v1';
 
@@ -40,6 +40,7 @@ export default function App() {
     return (stored && stored[0].id) || conversations[0].id;
   });
   const [uploading, setUploading] = useState(false);
+  const [crawling, setCrawling] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState(null);
   const abortRef = useRef(null);
@@ -112,6 +113,20 @@ export default function App() {
       setError(String(e.message || e));
     } finally {
       setUploading(false);
+    }
+  };
+
+  const onCrawl = async (options) => {
+    const chatId = active.id;
+    setCrawling(true);
+    setError(null);
+    try {
+      const res = await crawlUrls(chatId, options);
+      setConversationFiles(chatId, res.indexed_files || []);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setCrawling(false);
     }
   };
 
@@ -192,12 +207,14 @@ export default function App() {
         sessionId={active?.id}
         indexedFiles={indexedFiles}
         uploading={uploading}
+        crawling={crawling}
         onNewChat={onNewChat}
         onSelectChat={onSelectChat}
         onDeleteChat={onDeleteChat}
         onRenameChat={onRenameChat}
         onClearAll={onClearAll}
         onUpload={onUpload}
+        onCrawl={onCrawl}
         onClearFiles={onClearFiles}
         onDeleteFile={onDeleteFile}
       />
@@ -206,7 +223,7 @@ export default function App() {
           <ChatPane conversation={active} />
           {error && <div className="error-banner">{error}</div>}
           <InputBox
-            disabled={uploading}
+            disabled={uploading || crawling}
             streaming={streaming}
             onSend={onSend}
             onStop={onStop}
