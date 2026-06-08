@@ -246,19 +246,28 @@ def index_urls(
 
 
 def remove_file(session_id: str, filename: str) -> None:
-    """Remove one file from a session's index and rebuild the retriever.
+    """Remove one file *or URL* from a session's index and rebuild the retriever.
 
     Embeddings are disk-cached so rebuilding FAISS after removal is cheap —
     no VLM or embedding API calls are made for already-indexed content.
+
+    Files are tracked in `indexed_files` by basename while their `by_source`
+    keys are full filesystem paths, so they match by `Path(s).name`. URL
+    sources are stored as the full URL in both places, so they match exactly.
+    Handling both lets one endpoint remove either kind.
     """
     state = get_state(session_id)
 
-    sources_to_remove = [s for s in state.by_source if Path(s).name == filename]
+    sources_to_remove = [
+        s for s in state.by_source if s == filename or Path(s).name == filename
+    ]
     if not sources_to_remove:
         return
 
     for src in sources_to_remove:
         del state.by_source[src]
+        # URL sources are keyed by full URL in the signature map.
+        state.indexed_url_signatures.pop(src, None)
 
     state.indexed_files = [f for f in state.indexed_files if f != filename]
     h = state.filename_to_hash.pop(filename, None)

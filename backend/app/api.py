@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# Upper bounds for URL crawling so a single request can't spider a site forever.
+MAX_CRAWL_PAGES = 100
+MAX_CRAWL_DEPTH = 4
+
 # CORS origins: comma-separated list via env var, defaulting to local dev ports.
 _ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
@@ -204,14 +208,23 @@ async def upload(session_id: str = Form(...), files: list[UploadFile] = File(...
 
 @app.post("/crawl", response_model=UploadResponse)
 async def crawl_urls(req: UrlCrawlRequest):
+    urls = [u.strip() for u in (req.urls or []) if u and u.strip()]
+    if not urls:
+        raise HTTPException(status_code=400, detail="No URL provided.")
+
+    # Hard ceilings so an unbounded "full site" crawl (max_depth/max_pages = null)
+    # always terminates instead of spidering an entire site and hanging the request.
+    max_pages = MAX_CRAWL_PAGES if req.max_pages is None else min(req.max_pages, MAX_CRAWL_PAGES)
+    max_depth = MAX_CRAWL_DEPTH if req.max_depth is None else min(req.max_depth, MAX_CRAWL_DEPTH)
+
     try:
         new_chunks = await asyncio.to_thread(
             index_urls,
             req.session_id,
-            req.urls,
+            urls,
             req.allow_domains,
-            req.max_depth,
-            req.max_pages,
+            max_depth,
+            max_pages,
             req.auth_cookies,
             req.headers,
             req.render_javascript,

@@ -140,45 +140,73 @@ def _page_signature(text: str, title: str) -> str:
     return md5(value.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
-def _render_with_playwright(
-    url: str,
-    headers: dict[str, str] | None,
-    auth_cookies: dict[str, str] | None,
-    timeout: int,
-) -> str:
-    if os.name == "nt":
+class _PlaywrightRenderer:
+    """Keeps a single headless browser open for the duration of one crawl.
+
+    Launching a fresh browser per page (~7s of startup each) makes multi-page
+    crawls pathologically slow, so the browser/context are created once and
+    every page is rendered through a reused context. Construction raises if
+    Playwright isn't usable, letting the caller fall back to plain HTTP upfront.
+    """
+
+    def __init__(
+        self,
+        headers: dict[str, str] | None,
+        auth_cookies: dict[str, str] | None,
+        cookie_url: str | None,
+        timeout: int,
+    ) -> None:
+        if os.name == "nt":
+            try:
+                import asyncio
+
+                policy = getattr(asyncio, "WindowsProactorEventLoopPolicy", None)
+                if policy is not None:
+                    asyncio.set_event_loop_policy(policy())
+            except Exception:
+                logger.debug("Unable to set Windows Proactor event loop policy", exc_info=True)
+
         try:
-            import asyncio
+            from playwright.sync_api import sync_playwright
+        except ImportError as exc:
+            raise RuntimeError(
+                "Playwright is not installed; install playwright to enable JS rendering"
+            ) from exc
 
-            policy = getattr(asyncio, "WindowsProactorEventLoopPolicy", None)
-            if policy is not None:
-                asyncio.set_event_loop_policy(policy())
-        except Exception:
-            logger.debug("Unable to set Windows Proactor event loop policy", exc_info=True)
-
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError as exc:
-        raise RuntimeError(
-            "Playwright is not installed; install playwright to enable JS rendering"
-        ) from exc
-
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
-        context = browser.new_context()
+        self._timeout = timeout
+        self._pw = sync_playwright().start()
+        self._browser = self._pw.chromium.launch(headless=True)
+        self._context = self._browser.new_context()
         if headers:
-            context.set_extra_http_headers(headers)
-        if auth_cookies:
-            cookies = [
-                {"name": name, "value": value, "url": url}
-                for name, value in auth_cookies.items()
-            ]
-            context.add_cookies(cookies)
-        page = context.new_page()
-        page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
-        content = page.content()
-        browser.close()
-        return content
+            self._context.set_extra_http_headers(headers)
+        if auth_cookies and cookie_url:
+            self._context.add_cookies(
+                [{"name": n, "value": v, "url": cookie_url} for n, v in auth_cookies.items()]
+            )
+
+    def render(self, url: str) -> str:
+        page = self._context.new_page()
+        try:
+            # "domcontentloaded" returns as soon as the DOM is parsed (after on-load
+            # JS), which is fast and reliable. "networkidle" waits for 500ms of zero
+            # network traffic — many sites (analytics, fonts, polling) never reach it,
+            # so waiting on it would burn the full timeout on every page.
+            page.goto(url, wait_until="domcontentloaded", timeout=self._timeout * 1000)
+            try:
+                # Best-effort settle for client-rendered content; never block the
+                # whole render budget on it.
+                page.wait_for_load_state("networkidle", timeout=3000)
+            except Exception:
+                pass
+            return page.content()
+        finally:
+            page.close()
+
+    def close(self) -> None:
+        try:
+            self._browser.close()
+        finally:
+            self._pw.stop()
 
 
 @traceable(run_type="tool", name="load_url_documents")
@@ -224,74 +252,91 @@ def load_url_documents(
     queued: set[str] = set(normalized_starts)
     content_signatures: set[str] = set()
     queue = deque((url, 0) for url in normalized_starts)
-    rendering_available = render_javascript
-
-    while queue and (max_pages is None or len(seen) < max_pages):
-        url, depth = queue.popleft()
-        if url in seen or (max_depth is not None and depth > max_depth):
-            continue
-        seen.add(url)
-
-        html = None
-        if rendering_available and _is_probable_html_url(url):
-            try:
-                html = _render_with_playwright(url, headers, auth_cookies, render_timeout)
-            except Exception as exc:
-                logger.warning("Playwright render failed for %s: %s", url, exc)
-                if isinstance(exc, NotImplementedError):
-                    rendering_available = False
-                    logger.warning(
-                        "Disabling Playwright rendering for the rest of this crawl; "
-                        "falling back to direct HTTP requests."
-                    )
-                html = None
-
-        if html is None:
-            try:
-                resp = session.get(url, timeout=render_timeout)
-                if resp.status_code != 200:
-                    logger.warning("URL loader skipped %s — status %s", url, resp.status_code)
-                    continue
-                if "text/html" not in resp.headers.get("Content-Type", ""):
-                    logger.debug("URL loader skipped non-HTML %s", url)
-                    continue
-                html = resp.text
-            except Exception as exc:
-                logger.warning("URL loader request failed for %s: %s", url, exc)
-                continue
-
-        text = _extract_text(html)
-        if not text or len(text) < 50:
-            logger.debug("URL loader found no text for %s", url)
-        title = ""
+    # One browser for the whole crawl (see _PlaywrightRenderer). If Playwright
+    # isn't usable, fall back to plain HTTP for the entire crawl upfront so we
+    # don't repeatedly try (and fail) to launch a browser per page.
+    renderer = None
+    if render_javascript:
         try:
-            soup = BeautifulSoup(html, "html.parser")
-            title = soup.title.string.strip() if soup.title and soup.title.string else ""
-        except Exception:
+            renderer = _PlaywrightRenderer(
+                headers,
+                auth_cookies,
+                normalized_starts[0] if normalized_starts else None,
+                render_timeout,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Playwright unavailable (%s); using direct HTTP requests for this crawl.",
+                exc,
+            )
+            renderer = None
+
+    try:
+        while queue and (max_pages is None or len(seen) < max_pages):
+            url, depth = queue.popleft()
+            if url in seen or (max_depth is not None and depth > max_depth):
+                continue
+            seen.add(url)
+
+            html = None
+            if renderer is not None and _is_probable_html_url(url):
+                try:
+                    html = renderer.render(url)
+                except Exception as exc:
+                    # Per-page render failure (e.g. timeout): fall back to HTTP for
+                    # just this page; the browser stays open for the rest of the crawl.
+                    logger.warning("Playwright render failed for %s: %s", url, exc)
+                    html = None
+
+            if html is None:
+                try:
+                    resp = session.get(url, timeout=render_timeout)
+                    if resp.status_code != 200:
+                        logger.warning("URL loader skipped %s — status %s", url, resp.status_code)
+                        continue
+                    if "text/html" not in resp.headers.get("Content-Type", ""):
+                        logger.debug("URL loader skipped non-HTML %s", url)
+                        continue
+                    html = resp.text
+                except Exception as exc:
+                    logger.warning("URL loader request failed for %s: %s", url, exc)
+                    continue
+
+            text = _extract_text(html)
+            if not text or len(text) < 50:
+                logger.debug("URL loader found no text for %s", url)
             title = ""
+            try:
+                soup = BeautifulSoup(html, "html.parser")
+                title = soup.title.string.strip() if soup.title and soup.title.string else ""
+            except Exception:
+                title = ""
 
-        signature = _page_signature(text, title)
-        if signature in content_signatures:
-            logger.debug("URL loader skipped duplicate content at %s", url)
-        else:
-            content_signatures.add(signature)
-            docs.append(Document(
-                page_content=text,
-                metadata={
-                    "source": url,
-                    "source_type": "web",
-                    "title": title,
-                    "signature": signature,
-                },
-            ))
+            signature = _page_signature(text, title)
+            if signature in content_signatures:
+                logger.debug("URL loader skipped duplicate content at %s", url)
+            else:
+                content_signatures.add(signature)
+                docs.append(Document(
+                    page_content=text,
+                    metadata={
+                        "source": url,
+                        "source_type": "web",
+                        "title": title,
+                        "signature": signature,
+                    },
+                ))
 
-        if max_depth is None or depth < max_depth:
-            for link in _extract_links(html, url, allowed_hosts):
-                if link not in seen and link not in queued and (
-                    max_pages is None or len(seen) + len(queue) < max_pages
-                ):
-                    queued.add(link)
-                    queue.append((link, depth + 1))
+            if max_depth is None or depth < max_depth:
+                for link in _extract_links(html, url, allowed_hosts):
+                    if link not in seen and link not in queued and (
+                        max_pages is None or len(seen) + len(queue) < max_pages
+                    ):
+                        queued.add(link)
+                        queue.append((link, depth + 1))
+    finally:
+        if renderer is not None:
+            renderer.close()
 
     logger.info(
         "URL loader crawled %d page(s) from %d start URL(s)",

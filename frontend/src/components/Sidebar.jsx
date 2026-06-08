@@ -26,9 +26,22 @@ const FILE_TYPE_STYLES = {
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'bmp', 'tiff']);
 const THUMB_EXTS = new Set(['pdf', 'png', 'jpg', 'jpeg', 'bmp', 'tiff']);
 
+const isUrl = (name) => /^https?:\/\//i.test(name);
+
 function DocThumbnail({ sessionId, name }) {
-  const ext = name.split('.').pop().toLowerCase();
   const [failed, setFailed] = useState(false);
+
+  // Web sources are indexed by full URL, not a file on disk — show a link badge
+  // instead of attempting a (doomed) thumbnail fetch.
+  if (isUrl(name)) {
+    return (
+      <span className="doc-thumb-badge" style={{ background: '#e0e7ff', color: '#4338ca' }}>
+        🔗
+      </span>
+    );
+  }
+
+  const ext = name.split('.').pop().toLowerCase();
 
   if (THUMB_EXTS.has(ext) && !failed) {
     return (
@@ -287,7 +300,7 @@ export default function Sidebar({
           {indexedFiles.map((name) => (
             <div className="doc-item" key={name} title={name}>
               <DocThumbnail sessionId={sessionId} name={name} />
-              <span className="doc-name">{name}</span>
+              <span className="doc-name">{isUrl(name) ? name.replace(/^https?:\/\//i, '') : name}</span>
               <button
                 className="doc-del"
                 title="Remove file"
