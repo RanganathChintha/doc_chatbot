@@ -17,33 +17,66 @@ function groupByTime(convs) {
 }
 
 const FILE_TYPE_STYLES = {
-  pdf:  { bg: '#fee2e2', color: '#dc2626', label: 'PDF' },
   csv:  { bg: '#dcfce7', color: '#16a34a', label: 'CSV' },
   xlsx: { bg: '#dcfce7', color: '#16a34a', label: 'XLS' },
   xls:  { bg: '#dcfce7', color: '#16a34a', label: 'XLS' },
+  pdf:  { bg: '#fee2e2', color: '#dc2626', label: 'PDF' },
 };
 
-const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'bmp', 'tiff']);
 const THUMB_EXTS = new Set(['pdf', 'png', 'jpg', 'jpeg', 'bmp', 'tiff']);
+const WIKI_PREFIX = 'Azure Wiki - ';
 
 const isUrl = (name) => /^https?:\/\//i.test(name);
+const humanize = (seg) => seg.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-function DocThumbnail({ sessionId, name }) {
+// Turn a raw indexed-source string into a readable title + a muted subtitle.
+// Wiki sources look like "Azure Wiki - <project>/<wikiId>/<path…>", which is
+// unreadable as-is, so we surface just the page title and its section path.
+function parseDocName(name) {
+  if (name.startsWith(WIKI_PREFIX)) {
+    const segs = name.slice(WIKI_PREFIX.length).split('/').filter(Boolean);
+    const pathSegs = segs.slice(2); // drop <project> and <wikiId>
+    const leaf = pathSegs.length ? pathSegs[pathSegs.length - 1] : segs[segs.length - 1] || 'Page';
+    const crumb = pathSegs.slice(0, -1).map(humanize).join(' › ');
+    return { kind: 'wiki', title: humanize(leaf), sub: crumb || 'Azure DevOps Wiki' };
+  }
+  if (isUrl(name)) {
+    let host = name;
+    try { host = new URL(name).hostname; } catch { host = name.replace(/^https?:\/\//i, ''); }
+    return { kind: 'url', title: name.replace(/^https?:\/\//i, ''), sub: host };
+  }
+  const ext = name.split('.').pop().toLowerCase();
+  return { kind: ext, title: name, sub: `${(ext || 'file').toUpperCase()} document` };
+}
+
+const WikiIcon = () => (
+  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+  </svg>
+);
+
+const GlobeIcon = () => (
+  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <circle cx="12" cy="12" r="10" />
+    <line x1="2" y1="12" x2="22" y2="12" />
+    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+  </svg>
+);
+
+function DocThumbnail({ sessionId, name, kind }) {
   const [failed, setFailed] = useState(false);
 
-  // Web sources are indexed by full URL, not a file on disk — show a link badge
-  // instead of attempting a (doomed) thumbnail fetch.
-  if (isUrl(name)) {
-    return (
-      <span className="doc-thumb-badge" style={{ background: '#e0e7ff', color: '#4338ca' }}>
-        🔗
-      </span>
-    );
+  if (kind === 'wiki') {
+    return <span className="doc-thumb-tile wiki"><WikiIcon /></span>;
+  }
+  if (kind === 'url') {
+    return <span className="doc-thumb-tile url"><GlobeIcon /></span>;
   }
 
-  const ext = name.split('.').pop().toLowerCase();
-
-  if (THUMB_EXTS.has(ext) && !failed) {
+  if (THUMB_EXTS.has(kind) && !failed) {
     return (
       <img
         className="doc-thumb"
@@ -54,7 +87,7 @@ function DocThumbnail({ sessionId, name }) {
     );
   }
 
-  const style = FILE_TYPE_STYLES[ext];
+  const style = FILE_TYPE_STYLES[kind];
   if (style) {
     return (
       <span className="doc-thumb-badge" style={{ background: style.bg, color: style.color }}>
@@ -62,7 +95,6 @@ function DocThumbnail({ sessionId, name }) {
       </span>
     );
   }
-  // generic image fallback
   return (
     <span className="doc-thumb-badge" style={{ background: '#f0eefc', color: '#4b40c5' }}>
       IMG
@@ -76,25 +108,21 @@ export default function Sidebar({
   sessionId,
   indexedFiles,
   uploading,
-  crawling,
   onNewChat,
   onSelectChat,
   onDeleteChat,
   onRenameChat,
   onClearAll,
   onUpload,
-  onCrawl,
+  onIngestWiki,
   onClearFiles,
   onDeleteFile,
 }) {
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editingText, setEditingText] = useState('');
-  const [crawlUrl, setCrawlUrl] = useState('');
-  const [renderJavascript, setRenderJavascript] = useState(true);
-  const [fullSite, setFullSite] = useState(true);
-  const [maxDepth, setMaxDepth] = useState(1);
-  const [maxPages, setMaxPages] = useState(5);
+  const [wikiUrl, setWikiUrl] = useState('');
+  const [wikiPat, setWikiPat] = useState('');
   const fileRef = useRef(null);
 
   const filtered = useMemo(() => {
@@ -113,21 +141,14 @@ export default function Sidebar({
     e.target.value = '';
   };
 
-  const submitCrawl = (e) => {
+  const onWikiSubmit = async (e) => {
     e.preventDefault();
-    const urls = crawlUrl
-      .split(/\s+/)
-      .map((url) => url.trim())
-      .filter(Boolean);
-    if (urls.length === 0) return;
-    onCrawl({
-      urls,
-      fullSite,
-      maxDepth,
-      maxPages,
-      renderJavascript,
-      renderTimeout: 30,
-    });
+    const url = wikiUrl.trim();
+    const pat = wikiPat.trim();
+    if (!url || !pat || uploading) return;
+    await onIngestWiki({ wikiUrl: url, pat });
+    setWikiUrl('');
+    setWikiPat('');
   };
 
   const startEdit = (c) => {
@@ -241,75 +262,53 @@ export default function Sidebar({
           style={{ display: 'none' }}
           onChange={onFilePick}
         />
-        <form className="crawl-form" onSubmit={submitCrawl}>
-          <textarea
-            className="crawl-input"
-            rows={2}
-            placeholder="Paste internal URL"
-            value={crawlUrl}
-            onChange={(e) => setCrawlUrl(e.target.value)}
-            disabled={crawling}
+        <form className="wiki-form" onSubmit={onWikiSubmit}>
+          <input
+            className="wiki-input"
+            placeholder="Azure DevOps wiki URL"
+            value={wikiUrl}
+            onChange={(e) => setWikiUrl(e.target.value)}
+            disabled={uploading}
           />
-          <div className="crawl-controls">
-            <label className="crawl-toggle">
-              <input
-                type="checkbox"
-                checked={renderJavascript}
-                onChange={(e) => setRenderJavascript(e.target.checked)}
-                disabled={crawling}
-              />
-              Render JS
-            </label>
-            <label className="crawl-toggle">
-              <input
-                type="checkbox"
-                checked={fullSite}
-                onChange={(e) => setFullSite(e.target.checked)}
-                disabled={crawling}
-              />
-              Full site
-            </label>
-            <label className="crawl-number">
-              Depth
-              <input
-                type="number"
-                min="0"
-                max="5"
-                value={maxDepth}
-                onChange={(e) => setMaxDepth(Number(e.target.value))}
-                disabled={crawling || fullSite}
-              />
-            </label>
-            <label className="crawl-number">
-              Pages
-              <input
-                type="number"
-                min="1"
-                max="50"
-                value={maxPages}
-                onChange={(e) => setMaxPages(Number(e.target.value))}
-                disabled={crawling || fullSite}
-              />
-            </label>
-          </div>
-          <button className="crawl-btn" type="submit" disabled={crawling || !crawlUrl.trim()}>
-            {crawling ? 'Crawling...' : 'Crawl URL'}
+          <input
+            className="wiki-input"
+            type="password"
+            placeholder="Personal access token"
+            value={wikiPat}
+            onChange={(e) => setWikiPat(e.target.value)}
+            disabled={uploading}
+          />
+          <button
+            className="wiki-submit"
+            type="submit"
+            disabled={uploading || !wikiUrl.trim() || !wikiPat.trim()}
+          >
+            {uploading ? 'Indexing...' : 'Index wiki'}
           </button>
         </form>
         <div className="docs-list">
-          {indexedFiles.map((name) => (
-            <div className="doc-item" key={name} title={name}>
-              <DocThumbnail sessionId={sessionId} name={name} />
-              <span className="doc-name">{isUrl(name) ? name.replace(/^https?:\/\//i, '') : name}</span>
-              <button
-                className="doc-del"
-                title="Remove file"
-                onClick={() => onDeleteFile(name)}
-              >
-                ×
-              </button>
-            </div>
-          ))}
+          {indexedFiles.map((name) => {
+            const info = parseDocName(name);
+            return (
+              <div className="doc-item" key={name}>
+                <DocThumbnail sessionId={sessionId} name={name} kind={info.kind} />
+                <div className="doc-meta">
+                  <span className="doc-title" title={name}>{info.title}</span>
+                  <span className="doc-sub" title={info.sub}>{info.sub}</span>
+                </div>
+                <button
+                  className="doc-del"
+                  title="Remove"
+                  onClick={() => onDeleteFile(name)}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+          {indexedFiles.length === 0 && (
+            <div className="docs-empty">No documents indexed yet.</div>
+          )}
         </div>
       </div>
     </aside>

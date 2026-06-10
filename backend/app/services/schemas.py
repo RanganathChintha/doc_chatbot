@@ -12,16 +12,10 @@ class ResetRequest(BaseModel):
     session_id: str
 
 
-class UrlCrawlRequest(BaseModel):
+class WikiIngestRequest(BaseModel):
     session_id: str
-    urls: list[str]
-    allow_domains: list[str] | None = None
-    max_depth: int | None = None
-    max_pages: int | None = None
-    auth_cookies: dict[str, str] | None = None
-    headers: dict[str, str] | None = None
-    render_javascript: bool = False
-    render_timeout: int = 30
+    wiki_url: str
+    pat: str
 
 
 class UploadResponse(BaseModel):

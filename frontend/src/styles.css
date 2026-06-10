@@ -209,78 +209,38 @@ button {
 .upload-btn:hover:not(:disabled) { background: #ecebfa; border-color: var(--primary); }
 .upload-btn:disabled { opacity: 0.6; cursor: wait; }
 
-.crawl-form {
-  margin-top: 8px;
+.wiki-form {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-}
-
-.crawl-input {
-  width: 100%;
-  resize: vertical;
-  min-height: 48px;
-  max-height: 96px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: white;
-  color: var(--text);
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1.4;
-  padding: 8px 9px;
-  outline: none;
-}
-.crawl-input:focus { border-color: var(--primary); }
-
-.crawl-controls {
-  display: grid;
-  grid-template-columns: 1fr 1fr 56px 56px;
   gap: 6px;
-  align-items: center;
+  margin-top: 8px;
 }
 
-.crawl-toggle,
-.crawl-number {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.crawl-toggle {
-  display: flex;
-  gap: 5px;
-  align-items: center;
-  min-width: 0;
-}
-
-.crawl-number {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.crawl-number input {
+.wiki-input {
   width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 5px 6px;
+  background: #f1f2f7;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
   font-size: 12px;
+  outline: none;
   color: var(--text);
 }
+.wiki-input:focus { background: white; border-color: var(--primary); }
+.wiki-input:disabled { opacity: 0.65; }
 
-.crawl-btn {
+.wiki-submit {
   width: 100%;
   background: white;
-  border: 1px solid var(--border);
+  border: 1px solid #c8cbdc;
   color: var(--primary);
   padding: 8px 10px;
   border-radius: 8px;
   font-weight: 700;
   font-size: 12px;
 }
-.crawl-btn:hover:not(:disabled) { background: #f7f6ff; border-color: var(--primary); }
-.crawl-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.wiki-submit:hover:not(:disabled) { background: #ecebfa; border-color: var(--primary); }
+.wiki-submit:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .docs-list {
   max-height: 220px;
@@ -294,47 +254,81 @@ button {
 .doc-item {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 4px 6px 4px 4px;
-  border-radius: 8px;
+  gap: 9px;
+  padding: 6px 8px 6px 6px;
+  border-radius: 10px;
   border: 1px solid var(--border);
   background: white;
   min-width: 0;
-  transition: border-color 0.12s;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
-.doc-item:hover { border-color: #c8cbdc; }
+.doc-item:hover {
+  border-color: #c8cbdc;
+  box-shadow: 0 1px 4px rgba(20, 20, 60, 0.06);
+}
+
+.doc-thumb,
+.doc-thumb-badge,
+.doc-thumb-tile {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
 
 .doc-thumb {
-  width: 36px;
-  height: 36px;
-  border-radius: 4px;
   object-fit: cover;
-  flex-shrink: 0;
   border: 1px solid var(--border);
   background: #f1f2f7;
 }
 
 .doc-thumb-badge {
-  width: 36px;
-  height: 36px;
-  border-radius: 4px;
-  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.3px;
 }
 
-.doc-name {
+.doc-thumb-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.doc-thumb-tile.wiki { background: linear-gradient(135deg, #e0f2fe, #bae6fd); color: #0369a1; }
+.doc-thumb-tile.url  { background: linear-gradient(135deg, #ede9fe, #ddd6fe); color: #6d28d9; }
+
+.doc-meta {
   flex: 1;
-  font-size: 11px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.doc-title {
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
+}
+
+.doc-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.docs-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 10px 4px;
 }
 
 .doc-del {

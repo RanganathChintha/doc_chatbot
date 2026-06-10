@@ -26,18 +26,14 @@ from fastapi.responses import Response, StreamingResponse
 
 from app.rag.rag_chain import get_session_history
 from app.services.chat import stream_chat
-from app.services.indexing import clear_session, get_state, index_files, index_urls, remove_file
+from app.services.indexing import clear_session, get_state, index_files, index_wiki_url, remove_file
 from app.retriever.hybrid_retriever import _bm25_cache_file
-from app.services.schemas import ChatRequest, ResetRequest, UrlCrawlRequest, UploadResponse
+from app.services.schemas import ChatRequest, ResetRequest, UploadResponse, WikiIngestRequest
 
 logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-# Upper bounds for URL crawling so a single request can't spider a site forever.
-MAX_CRAWL_PAGES = 100
-MAX_CRAWL_DEPTH = 4
 
 # CORS origins: comma-separated list via env var, defaulting to local dev ports.
 _ALLOWED_ORIGINS = os.getenv(
@@ -206,36 +202,32 @@ async def upload(session_id: str = Form(...), files: list[UploadFile] = File(...
     )
 
 
-@app.post("/crawl", response_model=UploadResponse)
-async def crawl_urls(req: UrlCrawlRequest):
-    urls = [u.strip() for u in (req.urls or []) if u and u.strip()]
-    if not urls:
-        raise HTTPException(status_code=400, detail="No URL provided.")
+@app.post("/wiki", response_model=UploadResponse)
+async def ingest_wiki(req: WikiIngestRequest):
+    if not req.wiki_url.strip():
+        raise HTTPException(status_code=400, detail="Wiki URL is required.")
+    if not req.pat.strip():
+        raise HTTPException(status_code=400, detail="Azure DevOps PAT is required.")
 
-    # Hard ceilings so an unbounded "full site" crawl (max_depth/max_pages = null)
-    # always terminates instead of spidering an entire site and hanging the request.
-    max_pages = MAX_CRAWL_PAGES if req.max_pages is None else min(req.max_pages, MAX_CRAWL_PAGES)
-    max_depth = MAX_CRAWL_DEPTH if req.max_depth is None else min(req.max_depth, MAX_CRAWL_DEPTH)
+    dest_dir = _session_dir(req.session_id)
+    (dest_dir / ".last_accessed").touch()
 
     try:
         new_chunks = await asyncio.to_thread(
-            index_urls,
+            index_wiki_url,
             req.session_id,
-            urls,
-            req.allow_domains,
-            max_depth,
-            max_pages,
-            req.auth_cookies,
-            req.headers,
-            req.render_javascript,
-            req.render_timeout,
+            req.wiki_url,
+            req.pat,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
-        logger.exception("URL indexing failed")
-        raise HTTPException(status_code=500, detail=f"URL indexing failed: {exc}")
+        logger.exception("Wiki indexing failed")
+        raise HTTPException(status_code=500, detail=f"Wiki indexing failed: {exc}")
 
     return UploadResponse(
-        indexed_files=get_state(req.session_id).indexed_files, new_chunks=new_chunks
+        indexed_files=get_state(req.session_id).indexed_files,
+        new_chunks=new_chunks,
     )
 
 

@@ -1,16 +1,17 @@
 # pipeline.py
-"""Shared document-loading + chunking pipeline used by both main.py (CLI)
-and app.py (Streamlit)."""
+"""Shared document-loading + chunking pipeline: parses uploaded files and Azure
+DevOps wiki pages into chunked Documents for indexing."""
 
 import logging
 import os
+from app.ingestion.azure_wiki_fetcher import fetch_wiki_pages_from_url
 from app.loaders.pdf_loader import load_pdf_text, extract_images_from_pdf
 from app.loaders.image_loader import load_image
 from app.loaders.tabular_loader import load_csv, load_excel
-from app.loaders.url_loader import load_url_documents
 from app.extractors.image_extractor import extract_text_from_images
 from app.splitter.text_splitter import split_documents
 from app.langsmith_tracing import langsmith_traceable as traceable
+from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
 
@@ -56,31 +57,41 @@ def load_and_chunk(input_files: list[str], verbose: bool = True):
     return chunked
 
 
-@traceable(run_type="tool", name="load_urls_and_chunk")
-def load_urls_and_chunk(
-    urls: list[str],
-    allow_domains: list[str] | None = None,
-    max_depth: int | None = 2,
-    max_pages: int | None = 20,
-    auth_cookies: dict[str, str] | None = None,
-    headers: dict[str, str] | None = None,
-    render_javascript: bool = False,
-    render_timeout: int = 30,
-):
-    logger.info("load_urls_and_chunk: starting with %d URL(s)", len(urls))
-    documents = load_url_documents(
-        urls,
-        allow_domains=allow_domains,
-        max_depth=max_depth,
-        max_pages=max_pages,
-        auth_cookies=auth_cookies,
-        headers=headers,
-        render_javascript=render_javascript,
-        render_timeout=render_timeout,
-    )
-    logger.info("load_urls_and_chunk: fetched %d page(s)", len(documents))
-    for doc in documents:
-        doc.metadata.setdefault("source_type", "web")
+@traceable(run_type="tool", name="load_and_chunk_wiki_url")
+def load_and_chunk_wiki_url(pat: str, wiki_url: str):
+    """Fetch an Azure DevOps wiki page and all of its child pages, then chunk.
+
+    `fetch_wiki_pages_from_url` calls the Wiki REST API with recursionLevel=full,
+    so a single root URL yields the target page plus every descendant page with
+    its markdown content. Each page becomes one Document (keyed by a unique
+    per-page `source`) before splitting, so retrieval and per-source dedup work
+    the same way they do for uploaded files.
+    """
+    logger.info("load_and_chunk_wiki_url: fetching wiki pages...")
+    pages = fetch_wiki_pages_from_url(pat=pat, wiki_url=wiki_url)
+    logger.info("load_and_chunk_wiki_url: fetched %d page(s)", len(pages))
+
+    documents = []
+    for page in pages:
+        content = (page.get("content") or "").strip()
+        if not content:
+            # Container/parent pages often hold only a list of child links and no
+            # body text — skip them so they don't add empty, noisy chunks.
+            logger.debug("load_and_chunk_wiki_url: skipping empty page %s", page.get("path"))
+            continue
+        documents.append(Document(
+            page_content=content,
+            metadata={
+                "source": page.get("source", "Azure Wiki"),
+                "source_type": "wiki",
+                "title": page.get("title", ""),
+                "remote_url": page.get("remote_url", ""),
+                "path": page.get("path", ""),
+                "page_id": page.get("id"),
+            },
+        ))
+
+    logger.info("load_and_chunk_wiki_url: %d page(s) with content, splitting...", len(documents))
     chunked = split_documents(documents)
-    logger.info("load_urls_and_chunk: %d chunk(s) produced", len(chunked))
+    logger.info("load_and_chunk_wiki_url: %d chunk(s) produced", len(chunked))
     return chunked
