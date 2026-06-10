@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import ChatPane from './components/ChatPane.jsx';
 import InputBox from './components/InputBox.jsx';
-import { chatStream, listFiles, resetSession, uploadFiles, clearFiles, deleteFile } from './api.js';
+import { chatStream, listFiles, resetSession, uploadFiles, clearFiles, deleteFile, ingestWiki } from './api.js';
 
 const STORAGE_KEY = 'doc_chatbot.conversations.v1';
 
@@ -115,6 +115,20 @@ export default function App() {
     }
   };
 
+  const onIngestWiki = async ({ wikiUrl, pat }) => {
+    const chatId = active.id;
+    setUploading(true);
+    setError(null);
+    try {
+      const res = await ingestWiki(chatId, wikiUrl, pat);
+      setConversationFiles(chatId, res.indexed_files || []);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const onClearFiles = async () => {
     if (!confirm('Remove all uploaded documents from this chat?')) return;
     const chatId = active.id;
@@ -198,6 +212,7 @@ export default function App() {
         onRenameChat={onRenameChat}
         onClearAll={onClearAll}
         onUpload={onUpload}
+        onIngestWiki={onIngestWiki}
         onClearFiles={onClearFiles}
         onDeleteFile={onDeleteFile}
       />

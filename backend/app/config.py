@@ -38,5 +38,10 @@ IMAGE_CACHE_FILE = "./cache/image_extractions.json"
 EMBEDDING_CACHE_DIR = "./cache/embeddings"
 LLM_CACHE_FILE = "./cache/llm_responses.sqlite"
 
+# --- Azure DevOps Wiki ---
+AZURE_DEVOPS_ORG = os.getenv("AZURE_DEVOPS_ORG", "")
+AZURE_DEVOPS_PROJECT = os.getenv("AZURE_DEVOPS_PROJECT", "")
+AZURE_API_VERSION = os.getenv("AZURE_API_VERSION", "7.1")
+
 # --- Memory ---
 CHAT_HISTORY_WINDOW = 5

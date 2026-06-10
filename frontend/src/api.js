@@ -20,6 +20,19 @@ export async function uploadFiles(sessionId, files) {
   return res.json();
 }
 
+export async function ingestWiki(sessionId, wikiUrl, pat) {
+  const res = await fetch(`${BASE}/wiki`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, wiki_url: wikiUrl, pat }),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(t || 'Wiki indexing failed');
+  }
+  return res.json();
+}
+
 export async function clearFiles(sessionId) {
   const res = await fetch(`${BASE}/files?session_id=${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',

@@ -209,6 +209,39 @@ button {
 .upload-btn:hover:not(:disabled) { background: #ecebfa; border-color: var(--primary); }
 .upload-btn:disabled { opacity: 0.6; cursor: wait; }
 
+.wiki-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.wiki-input {
+  width: 100%;
+  background: #f1f2f7;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  outline: none;
+  color: var(--text);
+}
+.wiki-input:focus { background: white; border-color: var(--primary); }
+.wiki-input:disabled { opacity: 0.65; }
+
+.wiki-submit {
+  width: 100%;
+  background: white;
+  border: 1px solid #c8cbdc;
+  color: var(--primary);
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 12px;
+}
+.wiki-submit:hover:not(:disabled) { background: #ecebfa; border-color: var(--primary); }
+.wiki-submit:disabled { opacity: 0.55; cursor: not-allowed; }
+
 .docs-list {
   max-height: 220px;
   overflow-y: auto;

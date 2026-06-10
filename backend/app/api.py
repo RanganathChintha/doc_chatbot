@@ -26,9 +26,9 @@ from fastapi.responses import Response, StreamingResponse
 
 from app.rag.rag_chain import get_session_history
 from app.services.chat import stream_chat
-from app.services.indexing import clear_session, get_state, index_files, remove_file
+from app.services.indexing import clear_session, get_state, index_files, index_wiki_url, remove_file
 from app.retriever.hybrid_retriever import _bm25_cache_file
-from app.services.schemas import ChatRequest, ResetRequest, UploadResponse
+from app.services.schemas import ChatRequest, ResetRequest, UploadResponse, WikiIngestRequest
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +199,35 @@ async def upload(session_id: str = Form(...), files: list[UploadFile] = File(...
 
     return UploadResponse(
         indexed_files=get_state(session_id).indexed_files, new_chunks=new_chunks
+    )
+
+
+@app.post("/wiki", response_model=UploadResponse)
+async def ingest_wiki(req: WikiIngestRequest):
+    if not req.wiki_url.strip():
+        raise HTTPException(status_code=400, detail="Wiki URL is required.")
+    if not req.pat.strip():
+        raise HTTPException(status_code=400, detail="Azure DevOps PAT is required.")
+
+    dest_dir = _session_dir(req.session_id)
+    (dest_dir / ".last_accessed").touch()
+
+    try:
+        new_chunks = await asyncio.to_thread(
+            index_wiki_url,
+            req.session_id,
+            req.wiki_url,
+            req.pat,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Wiki indexing failed")
+        raise HTTPException(status_code=500, detail=f"Wiki indexing failed: {exc}")
+
+    return UploadResponse(
+        indexed_files=get_state(req.session_id).indexed_files,
+        new_chunks=new_chunks,
     )
 
 

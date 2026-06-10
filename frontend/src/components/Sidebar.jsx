@@ -21,14 +21,25 @@ const FILE_TYPE_STYLES = {
   csv:  { bg: '#dcfce7', color: '#16a34a', label: 'CSV' },
   xlsx: { bg: '#dcfce7', color: '#16a34a', label: 'XLS' },
   xls:  { bg: '#dcfce7', color: '#16a34a', label: 'XLS' },
+  wiki: { bg: '#e0f2fe', color: '#0369a1', label: 'WIKI' },
 };
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'bmp', 'tiff']);
 const THUMB_EXTS = new Set(['pdf', 'png', 'jpg', 'jpeg', 'bmp', 'tiff']);
 
 function DocThumbnail({ sessionId, name }) {
-  const ext = name.split('.').pop().toLowerCase();
   const [failed, setFailed] = useState(false);
+
+  if (name.startsWith('Azure Wiki - ')) {
+    const style = FILE_TYPE_STYLES.wiki;
+    return (
+      <span className="doc-thumb-badge" style={{ background: style.bg, color: style.color }}>
+        {style.label}
+      </span>
+    );
+  }
+
+  const ext = name.split('.').pop().toLowerCase();
 
   if (THUMB_EXTS.has(ext) && !failed) {
     return (
@@ -69,12 +80,15 @@ export default function Sidebar({
   onRenameChat,
   onClearAll,
   onUpload,
+  onIngestWiki,
   onClearFiles,
   onDeleteFile,
 }) {
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editingText, setEditingText] = useState('');
+  const [wikiUrl, setWikiUrl] = useState('');
+  const [wikiPat, setWikiPat] = useState('');
   const fileRef = useRef(null);
 
   const filtered = useMemo(() => {
@@ -91,6 +105,16 @@ export default function Sidebar({
     const files = Array.from(e.target.files || []);
     if (files.length > 0) onUpload(files);
     e.target.value = '';
+  };
+
+  const onWikiSubmit = async (e) => {
+    e.preventDefault();
+    const url = wikiUrl.trim();
+    const pat = wikiPat.trim();
+    if (!url || !pat || uploading) return;
+    await onIngestWiki({ wikiUrl: url, pat });
+    setWikiUrl('');
+    setWikiPat('');
   };
 
   const startEdit = (c) => {
@@ -204,6 +228,30 @@ export default function Sidebar({
           style={{ display: 'none' }}
           onChange={onFilePick}
         />
+        <form className="wiki-form" onSubmit={onWikiSubmit}>
+          <input
+            className="wiki-input"
+            placeholder="Azure DevOps wiki URL"
+            value={wikiUrl}
+            onChange={(e) => setWikiUrl(e.target.value)}
+            disabled={uploading}
+          />
+          <input
+            className="wiki-input"
+            type="password"
+            placeholder="Personal access token"
+            value={wikiPat}
+            onChange={(e) => setWikiPat(e.target.value)}
+            disabled={uploading}
+          />
+          <button
+            className="wiki-submit"
+            type="submit"
+            disabled={uploading || !wikiUrl.trim() || !wikiPat.trim()}
+          >
+            {uploading ? 'Indexing...' : 'Index wiki'}
+          </button>
+        </form>
         <div className="docs-list">
           {indexedFiles.map((name) => (
             <div className="doc-item" key={name} title={name}>

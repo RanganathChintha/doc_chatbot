@@ -19,7 +19,7 @@ from langchain_community.vectorstores import FAISS
 
 from app.config import TOP_K
 from app.langsmith_tracing import langsmith_traceable as traceable
-from app.pipeline import load_and_chunk
+from app.pipeline import load_and_chunk, load_and_chunk_wiki_url
 from app.rag.rag_chain import build_rag_chain
 from app.retriever.faiss_retriever import build_merged_faiss, group_chunks_by_source
 from app.retriever.hybrid_retriever import build_hybrid_retriever
@@ -164,6 +164,54 @@ def index_files(session_id: str, paths: list[Path]) -> int:
     return len(new_chunks)
 
 
+@traceable(run_type="chain", name="ingest_wiki_pipeline")
+def index_wiki_url(session_id: str, wiki_url: str, pat: str) -> int:
+    """Index Azure DevOps Wiki pages into a session from a copied wiki URL."""
+    logger.info("index_wiki_url: session=%s", session_id)
+    state = get_state(session_id)
+
+    new_chunks = load_and_chunk_wiki_url(pat=pat, wiki_url=wiki_url)
+    logger.info("index_wiki_url: load_and_chunk_wiki_url returned %d chunk(s)", len(new_chunks))
+    if not new_chunks:
+        return 0
+
+    sources = sorted({
+        chunk.metadata.get("source", "Azure Wiki")
+        for chunk in new_chunks
+    })
+    existing_sources = set(state.by_source)
+    unique_sources = [source for source in sources if source not in existing_sources]
+    if not unique_sources:
+        logger.info("index_wiki_url: wiki source already indexed")
+        return 0
+
+    new_chunks = [
+        chunk
+        for chunk in new_chunks
+        if chunk.metadata.get("source", "Azure Wiki") in unique_sources
+    ]
+
+    em = embedding_model()
+    if state.faiss_store is None:
+        logger.debug("index_wiki_url: building merged FAISS store")
+        state.faiss_store = build_merged_faiss(new_chunks, em)
+    else:
+        logger.debug("index_wiki_url: adding %d chunk(s) to existing FAISS store", len(new_chunks))
+        state.faiss_store.add_documents(new_chunks)
+
+    new_by_source = group_chunks_by_source(new_chunks)
+    for source, chunks in new_by_source.items():
+        state.by_source.setdefault(source, []).extend(chunks)
+
+    all_chunks = [c for docs in state.by_source.values() for c in docs]
+    logger.info("index_wiki_url: total chunks: %d", len(all_chunks))
+
+    _rebuild_chain(session_id, state, all_chunks)
+    state.indexed_files.extend(unique_sources)
+    logger.info("index_wiki_url: complete, added %d chunk(s)", len(new_chunks))
+    return len(new_chunks)
+
+
 def remove_file(session_id: str, filename: str) -> None:
     """Remove one file from a session's index and rebuild the retriever.
 
@@ -172,7 +220,7 @@ def remove_file(session_id: str, filename: str) -> None:
     """
     state = get_state(session_id)
 
-    sources_to_remove = [s for s in state.by_source if Path(s).name == filename]
+    sources_to_remove = [s for s in state.by_source if s == filename or Path(s).name == filename]
     if not sources_to_remove:
         return
 
