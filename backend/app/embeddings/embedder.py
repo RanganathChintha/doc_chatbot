@@ -26,12 +26,20 @@ def get_embedding_model() -> CacheBackedEmbeddings:
     To download (or update) the model, temporarily unset HF_HUB_OFFLINE.
     """
     os.makedirs(EMBEDDING_CACHE_DIR, exist_ok=True)
-    underlying = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    # normalize_embeddings=True is required: FAISS ranks by L2 distance, and the
+    # hybrid retriever's L2→similarity conversion (1 - l2/2) is only valid for
+    # unit vectors. Without normalization, ranking is wrong and most semantic
+    # scores clamp to 0, collapsing retrieval onto BM25 alone.
+    underlying = HuggingFaceEmbeddings(
+        model_name=EMBEDDING_MODEL,
+        encode_kwargs={"normalize_embeddings": True},
+    )
     store = LocalFileStore(EMBEDDING_CACHE_DIR)
     cached = CacheBackedEmbeddings.from_bytes_store(
         underlying,
         store,
-        namespace=EMBEDDING_MODEL.replace("/", "_"),
+        # "_norm" suffix busts any cached un-normalized vectors from before this fix.
+        namespace=EMBEDDING_MODEL.replace("/", "_") + "_norm",
     )
     logger.info("Embedding model loaded locally (cached, offline): %s", EMBEDDING_MODEL)
     return cached

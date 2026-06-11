@@ -20,9 +20,6 @@ from app.config import (
     LLM_CACHE_FILE,
     CACHE_DIR,
     CHAT_HISTORY_WINDOW,
-    TOP_K,
-    RETRIEVAL_SCORE_THRESHOLD,
-    DEBUG_RETRIEVAL,
 )
 from app.langsmith_tracing import langsmith_traceable as traceable
 
@@ -94,23 +91,35 @@ def get_llm() -> ChatOpenAI:
 
 
 def _format_tagged_context(docs: list[Document]) -> str:
-    """Tag each chunk with [FILE: filename | page N | TYPE] so the LLM can cite pages."""
+    """Tag each chunk so the LLM can cite its origin.
+
+    Wiki/web pages are tagged [WIKI: title | url] so the model can cite a real
+    page name and link; files are tagged [FILE: filename | page N | TYPE].
+    """
     lines = []
     for d in docs:
-        source = d.metadata.get("source", "?")
-        source_name = os.path.basename(source) if source else "?"
-        kind = "TEXT" if d.metadata.get("source_type") == "text" else "IMAGE"
-        page_label = d.metadata.get("page_label")
-        page_raw = d.metadata.get("page")
-        if page_raw is not None:
-            page_str = f" | page {page_raw + 1}"
-            if page_label is not None:
-                page_str += f" (label {page_label})"
-        elif page_label is not None:
-            page_str = f" | page {page_label}"
+        meta = d.metadata
+        # Only true images are IMAGE; text, wiki, web, and tabular chunks are TEXT.
+        kind = "IMAGE" if meta.get("source_type") == "image" else "TEXT"
+        title = (meta.get("title") or "").strip()
+        if title:
+            url = meta.get("remote_url") or meta.get("source") or ""
+            tag = f"[WIKI: {title}{' | ' + url if url else ''} | {kind}]"
         else:
-            page_str = ""
-        lines.append(f"[FILE: {source_name}{page_str} | {kind}] {d.page_content}")
+            source = meta.get("source", "?")
+            source_name = os.path.basename(source) if source else "?"
+            page_label = meta.get("page_label")
+            page_raw = meta.get("page")
+            if page_raw is not None:
+                page_str = f" | page {page_raw + 1}"
+                if page_label is not None:
+                    page_str += f" (label {page_label})"
+            elif page_label is not None:
+                page_str = f" | page {page_label}"
+            else:
+                page_str = ""
+            tag = f"[FILE: {source_name}{page_str} | {kind}]"
+        lines.append(f"{tag} {d.page_content}")
     return "\n\n".join(lines)
 
 
@@ -221,39 +230,9 @@ def build_rag_chain(
             logger.debug("Retrieval cache hit for query: %s...", query[:60])
             return _retrieval_cache[query]
 
-        # RETRIEVAL_SCORE_THRESHOLD applies when the retriever exposes scored results.
-        # The HybridRetriever is a BaseRetriever (no similarity_search_with_score),
-        # so the scored path below is reserved for direct FAISS store usage.
-        if hasattr(retriever, "similarity_search_with_score"):
-            results = retriever.similarity_search_with_score(query, k=TOP_K * 2)
-
-            # FAISS default uses L2 distance (lower = more similar, range ~0–2 for unit
-            # vectors). RETRIEVAL_SCORE_THRESHOLD should be calibrated accordingly.
-            threshold_filtered = [
-                (doc, score) for doc, score in results
-                if score >= RETRIEVAL_SCORE_THRESHOLD
-            ]
-            if len(threshold_filtered) < max(3, TOP_K // 2):
-                filtered = results[:TOP_K]
-            else:
-                filtered = threshold_filtered
-
-            source_hint = _find_source_hint(query)
-            if source_hint:
-                def sort_key(pair):
-                    doc, score = pair
-                    return (doc.metadata.get("source") == source_hint, score)
-                filtered.sort(key=sort_key, reverse=True)
-
-            docs = [doc for doc, _ in filtered[:TOP_K]]
-
-            if DEBUG_RETRIEVAL:
-                logger.debug("Retrieval debug — query: %s...", query[:100])
-                for i, (doc, score) in enumerate(results[:TOP_K], 1):
-                    source = os.path.basename(doc.metadata.get("source", "?"))
-                    logger.debug("  [%d] %s p.%s score=%.4f", i, source, doc.metadata.get("page", "?"), score)
-        else:
-            docs = retriever.invoke(query)
+        # HybridRetriever owns semantic + BM25 fusion, scoring, and the top-K cut
+        # (and logs its own ranking when DEBUG_RETRIEVAL is on).
+        docs = retriever.invoke(query)
 
         # Store in cache, evicting the oldest entry when full.
         if len(_retrieval_cache) >= _RETRIEVAL_CACHE_SIZE:
@@ -263,10 +242,16 @@ def build_rag_chain(
 
     qa_system_prompt = (
         "Answer using only the context provided. Do not hallucinate. "
-        "Each context chunk is tagged with [FILE: filename | page N | TYPE]. "
+        "Each context chunk is tagged with either [FILE: filename | page N | TYPE] "
+        "or [WIKI: page title | url | TYPE]. "
         "When the user asks about a specific page, use the chunks from that page. "
         "If the requested page has no content in the context, say so explicitly. "
-        "Cite the file and page number in your answer. Be concise."
+        "Cite the file and page number, or the wiki page title and its url, in your answer. "
+        "When the user asks to list, enumerate, or extract items (such as tickets, "
+        "action items, issues, IDs, or rows), reproduce EVERY matching item found in "
+        "the context verbatim and in full — do NOT summarize, merge, or omit any of "
+        "them. Preserve identifiers (e.g. ticket IDs) exactly as written. "
+        "Otherwise, be concise."
     )
 
     qa_prompt = ChatPromptTemplate.from_messages([

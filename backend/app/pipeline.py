@@ -89,5 +89,18 @@ def load_and_chunk_wiki_url(pat: str, wiki_url: str):
 
     logger.info("load_and_chunk_wiki_url: %d page(s) with content, splitting...", len(documents))
     chunked = split_documents(documents)
+
+    # Prepend each chunk with its page title + breadcrumb path. The title/path are
+    # otherwise metadata-only and invisible to both FAISS and BM25, so a page can't
+    # be found by its name (e.g. a meeting-minutes date like "2026 05 28") — which is
+    # how this wiki distinguishes dozens of near-identical pages. Embedding the title
+    # into the searchable text is what makes "the <date> meeting minutes" retrievable.
+    for chunk in chunked:
+        title = (chunk.metadata.get("title") or "").strip()
+        path = (chunk.metadata.get("path") or "").strip()
+        header_bits = [bit for bit in (title, path) if bit]
+        if header_bits:
+            chunk.page_content = f"[Wiki page: {' | '.join(header_bits)}]\n{chunk.page_content}"
+
     logger.info("load_and_chunk_wiki_url: %d chunk(s) produced", len(chunked))
     return chunked

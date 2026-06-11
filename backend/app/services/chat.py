@@ -27,6 +27,8 @@ def _format_docs(docs: list) -> list[dict]:
         {
             "source": d.metadata.get("source", ""),
             "source_type": d.metadata.get("source_type", ""),
+            "title": d.metadata.get("title", ""),
+            "url": d.metadata.get("remote_url", ""),
             "page": d.metadata.get("page"),
             "snippet": d.page_content[:300],
         }

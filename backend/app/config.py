@@ -24,12 +24,14 @@ LLM_MODEL = "gpt-oss-120b-onprem"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 # --- Splitter ---
-CHUNK_SIZE = 1000
+CHUNK_SIZE = 2000
 CHUNK_OVERLAP = 200
 
 # --- Retriever ---
-TOP_K = 15
-RETRIEVAL_SCORE_THRESHOLD = 0.3
+# Higher TOP_K gives the LLM more of the document at once, which matters for
+# "list all X" / aggregation queries (tickets, action items) where the items are
+# spread across many chunks. Costs more tokens per request — tune down if needed.
+TOP_K = 4
 DEBUG_RETRIEVAL = True
 
 # --- Cache locations ---
