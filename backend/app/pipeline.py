@@ -1,6 +1,6 @@
 # pipeline.py
-"""Shared document-loading + chunking pipeline: parses uploaded files and Azure
-DevOps wiki pages into chunked Documents for indexing."""
+"""Shared document-loading + chunking pipeline: parses uploaded files and
+web pages into chunked Documents for indexing."""
 
 import logging
 import os
@@ -59,13 +59,11 @@ def load_and_chunk(input_files: list[str], verbose: bool = True):
 
 @traceable(run_type="tool", name="load_and_chunk_wiki_url")
 def load_and_chunk_wiki_url(pat: str, wiki_url: str):
-    """Fetch an Azure DevOps wiki page and all of its child pages, then chunk.
+    """Fetch a URL and all of its child pages via HTML scraping, then chunk.
 
-    `fetch_wiki_pages_from_url` calls the Wiki REST API with recursionLevel=full,
-    so a single root URL yields the target page plus every descendant page with
-    its markdown content. Each page becomes one Document (keyed by a unique
-    per-page `source`) before splitting, so retrieval and per-source dedup work
-    the same way they do for uploaded files.
+    `fetch_wiki_pages_from_url` fetches the parent page, discovers all child
+    links (same domain + path prefix), and scrapes each one's content. Each
+    page becomes one Document before splitting.
     """
     logger.info("load_and_chunk_wiki_url: fetching wiki pages...")
     pages = fetch_wiki_pages_from_url(pat=pat, wiki_url=wiki_url)
@@ -75,15 +73,13 @@ def load_and_chunk_wiki_url(pat: str, wiki_url: str):
     for page in pages:
         content = (page.get("content") or "").strip()
         if not content:
-            # Container/parent pages often hold only a list of child links and no
-            # body text — skip them so they don't add empty, noisy chunks.
             logger.debug("load_and_chunk_wiki_url: skipping empty page %s", page.get("path"))
             continue
         documents.append(Document(
             page_content=content,
             metadata={
-                "source": page.get("source", "Azure Wiki"),
-                "source_type": "wiki",
+                "source": page.get("source", ""),
+                "source_type": page.get("source_type", "web"),
                 "title": page.get("title", ""),
                 "remote_url": page.get("remote_url", ""),
                 "path": page.get("path", ""),

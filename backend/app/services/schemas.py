@@ -15,7 +15,7 @@ class ResetRequest(BaseModel):
 class WikiIngestRequest(BaseModel):
     session_id: str
     wiki_url: str
-    pat: str
+    pat: str = ""
 
 
 class UploadResponse(BaseModel):

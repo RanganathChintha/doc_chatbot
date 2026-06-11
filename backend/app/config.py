@@ -24,13 +24,13 @@ LLM_MODEL = "gpt-oss-120b-onprem"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 # --- Splitter ---
-CHUNK_SIZE = 10000
-CHUNK_OVERLAP = 1000
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 200
 
 # --- Retriever ---
-TOP_K = 6
+TOP_K = 15
 RETRIEVAL_SCORE_THRESHOLD = 0.3
-DEBUG_RETRIEVAL = False
+DEBUG_RETRIEVAL = True
 
 # --- Cache locations ---
 CACHE_DIR = "./cache"

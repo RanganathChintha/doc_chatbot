@@ -168,7 +168,7 @@ def index_files(session_id: str, paths: list[Path]) -> int:
 
 @traceable(run_type="chain", name="ingest_wiki_pipeline")
 def index_wiki_url(session_id: str, wiki_url: str, pat: str) -> int:
-    """Index Azure DevOps Wiki pages into a session from a copied wiki URL."""
+    """Fetch a web page and its child pages, then index into a session."""
     logger.info("index_wiki_url: session=%s", session_id)
     state = get_state(session_id)
 
@@ -178,19 +178,19 @@ def index_wiki_url(session_id: str, wiki_url: str, pat: str) -> int:
         return 0
 
     sources = sorted({
-        chunk.metadata.get("source", "Azure Wiki")
+        chunk.metadata.get("source", wiki_url)
         for chunk in new_chunks
     })
     existing_sources = set(state.by_source)
     unique_sources = [source for source in sources if source not in existing_sources]
     if not unique_sources:
-        logger.info("index_wiki_url: wiki source already indexed")
+        logger.info("index_wiki_url: source already indexed")
         return 0
 
     new_chunks = [
         chunk
         for chunk in new_chunks
-        if chunk.metadata.get("source", "Azure Wiki") in unique_sources
+        if chunk.metadata.get("source", wiki_url) in unique_sources
     ]
 
     em = embedding_model()

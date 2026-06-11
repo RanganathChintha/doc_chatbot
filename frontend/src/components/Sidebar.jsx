@@ -145,8 +145,8 @@ export default function Sidebar({
     e.preventDefault();
     const url = wikiUrl.trim();
     const pat = wikiPat.trim();
-    if (!url || !pat || uploading) return;
-    await onIngestWiki({ wikiUrl: url, pat });
+    if (!url || uploading) return;
+    await onIngestWiki({ wikiUrl: url, pat: pat || undefined });
     setWikiUrl('');
     setWikiPat('');
   };
@@ -265,7 +265,7 @@ export default function Sidebar({
         <form className="wiki-form" onSubmit={onWikiSubmit}>
           <input
             className="wiki-input"
-            placeholder="Azure DevOps wiki URL"
+            placeholder="Web URL (parent page)"
             value={wikiUrl}
             onChange={(e) => setWikiUrl(e.target.value)}
             disabled={uploading}
@@ -273,7 +273,7 @@ export default function Sidebar({
           <input
             className="wiki-input"
             type="password"
-            placeholder="Personal access token"
+            placeholder="Auth token (optional)"
             value={wikiPat}
             onChange={(e) => setWikiPat(e.target.value)}
             disabled={uploading}
@@ -281,9 +281,9 @@ export default function Sidebar({
           <button
             className="wiki-submit"
             type="submit"
-            disabled={uploading || !wikiUrl.trim() || !wikiPat.trim()}
+            disabled={uploading || !wikiUrl.trim()}
           >
-            {uploading ? 'Indexing...' : 'Index wiki'}
+            {uploading ? 'Indexing...' : 'Fetch pages'}
           </button>
         </form>
         <div className="docs-list">

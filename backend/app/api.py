@@ -206,8 +206,6 @@ async def upload(session_id: str = Form(...), files: list[UploadFile] = File(...
 async def ingest_wiki(req: WikiIngestRequest):
     if not req.wiki_url.strip():
         raise HTTPException(status_code=400, detail="Wiki URL is required.")
-    if not req.pat.strip():
-        raise HTTPException(status_code=400, detail="Azure DevOps PAT is required.")
 
     dest_dir = _session_dir(req.session_id)
     (dest_dir / ".last_accessed").touch()
