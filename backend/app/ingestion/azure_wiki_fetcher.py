@@ -251,6 +251,30 @@ def _clean_markdown(text: str) -> str:
     text = _tables_to_text(text)
     return text.strip()
 
+def _resolve_markdown_urls(text: str, base_url: str) -> str:
+    """Resolve relative URLs in markdown links to absolute URLs against base_url.
+
+    Azure DevOps wiki pages often contain relative links to attachments
+    (/.attachments/file.pdf) or other pages. These must be made absolute
+    so they work when presented outside the Azure DevOps web context.
+
+    NOTE: urljoin treats paths starting with '/' as domain-root-relative,
+    but Azure DevOps wiki treats '/' as wiki-root-relative. To work around
+    this the leading '/' is stripped before joining.
+    """
+    if not base_url or not text:
+        return text
+    base_dir = base_url.rstrip("/") + "/"
+    def _replace(match):
+        url = match.group(2)
+        parsed = urlparse(url)
+        if parsed.scheme or url.startswith("mailto:") or url.startswith("#"):
+            return match.group(0)
+        absolute = urljoin(base_dir, url.lstrip("/"))
+        return f"[{match.group(1)}]({absolute})"
+    return re.sub(r'\[([^\]]*)\]\(([^)]*)\)', _replace, text)
+
+
 def _make_page_dict_rest(
     node: dict,
     org: str,
@@ -630,7 +654,9 @@ def _fetch_via_rest_api(
                         page_id, page.get("path"),
                     )
         clean              = _clean_markdown(content)
-        page["content"]    = clean
+        wiki_root = f"https://dev.azure.com/{org}/{proj}/_wiki/wikis/{wiki_id}/"
+        clean               = _resolve_markdown_urls(clean, wiki_root)
+        page["content"]     = clean
         page["char_count"] = len(clean)
         return page
 
@@ -715,7 +741,7 @@ def _fetch_page(session: requests.Session, url: str) -> dict[str, Any]:
 
     raw_text   = main_content.get_text(separator="\n", strip=True) if main_content else ""
     lines      = [line.strip() for line in raw_text.splitlines() if line.strip()]
-    clean_text = "\n".join(lines)
+    clean_text = _resolve_markdown_urls("\n".join(lines), url)
 
     title_tag  = soup.find("title")
     page_title = title_tag.get_text(strip=True) if title_tag else url
