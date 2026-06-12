@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import pickle
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -17,7 +19,7 @@ from typing import Any
 
 from langchain_community.vectorstores import FAISS
 
-from app.config import TOP_K
+from app.config import FAISS_CACHE_DIR, TOP_K
 from app.langsmith_tracing import langsmith_traceable as traceable
 from app.pipeline import load_and_chunk, load_and_chunk_wiki_url
 from app.rag.rag_chain import build_rag_chain
@@ -82,11 +84,16 @@ def _evict_stale_sessions() -> None:
 
 
 def get_state(session_id: str) -> IndexState:
-    """Return the session's IndexState, creating an empty one on first use."""
+    """Return the session's IndexState, creating an empty one on first use.
+
+    If no in-memory state exists, attempts to restore from disk (FAISS + metadata)
+    so the index survives server restarts.
+    """
     with _lock:
         st = _sessions.get(session_id)
         if st is None:
             st = IndexState()
+            _load_index_state_from_disk(session_id, st)
             _sessions[session_id] = st
         _session_last_access[session_id] = time.time()
         return st
@@ -97,6 +104,73 @@ def clear_session(session_id: str) -> None:
     with _lock:
         _sessions.pop(session_id, None)
         _session_last_access.pop(session_id, None)
+    _remove_index_state_from_disk(session_id)
+
+
+# ── FAISS + metadata persistence to disk ─────────────────────────────
+
+def _faiss_cache_dir(session_id: str) -> Path:
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in session_id)
+    return Path(f"{FAISS_CACHE_DIR}/{safe}")
+
+
+def _save_index_state_to_disk(session_id: str, state: IndexState) -> None:
+    """Persist FAISS store and session metadata so they survive a restart."""
+    if state.faiss_store is None:
+        return
+    cache_dir = _faiss_cache_dir(session_id)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        state.faiss_store.save_local(str(cache_dir), index_name="index")
+        metadata = {
+            "indexed_files": state.indexed_files,
+            "indexed_file_hashes": state.indexed_file_hashes,
+            "filename_to_hash": state.filename_to_hash,
+            "indexed_url_signatures": state.indexed_url_signatures,
+            "by_source": state.by_source,
+        }
+        with open(cache_dir / "metadata.pkl", "wb") as f:
+            pickle.dump(metadata, f)
+    except Exception:
+        logger.exception("Failed to persist index state for session %s", session_id)
+
+
+def _load_index_state_from_disk(session_id: str, state: IndexState) -> bool:
+    """Restore FAISS store + metadata from disk. Returns True on success."""
+    from app.services.resources import embedding_model
+    cache_dir = _faiss_cache_dir(session_id)
+    if not (cache_dir / "index.faiss").exists():
+        return False
+    try:
+        em = embedding_model()
+        state.faiss_store = FAISS.load_local(
+            str(cache_dir), em,
+            index_name="index",
+            allow_dangerous_deserialization=True,
+        )
+        with open(cache_dir / "metadata.pkl", "rb") as f:
+            meta: dict = pickle.load(f)
+        state.indexed_files = meta["indexed_files"]
+        state.indexed_file_hashes = meta["indexed_file_hashes"]
+        state.filename_to_hash = meta["filename_to_hash"]
+        state.indexed_url_signatures = meta["indexed_url_signatures"]
+        state.by_source = meta["by_source"]
+        all_chunks = [c for docs in state.by_source.values() for c in docs]
+        _rebuild_chain(session_id, state, all_chunks)
+        logger.info(
+            "Restored index state for session %s from disk (%d chunks, %d files)",
+            session_id, len(all_chunks), len(state.indexed_files),
+        )
+        return True
+    except Exception:
+        logger.exception("Failed to load index state for session %s from disk", session_id)
+        return False
+
+
+def _remove_index_state_from_disk(session_id: str) -> None:
+    cache_dir = _faiss_cache_dir(session_id)
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir, ignore_errors=True)
 
 
 @traceable(run_type="chain", name="rebuild_rag_chain")
@@ -162,6 +236,7 @@ def index_files(session_id: str, paths: list[Path]) -> int:
     state.indexed_file_hashes.update(path_hashes[p] for p in new_paths)
     for p in new_paths:
         state.filename_to_hash[p.name] = path_hashes[p]
+    _save_index_state_to_disk(session_id, state)
     logger.info("index_files: complete, added %d chunk(s)", len(new_chunks))
     return len(new_chunks)
 
@@ -210,6 +285,7 @@ def index_wiki_url(session_id: str, wiki_url: str, pat: str) -> int:
 
     _rebuild_chain(session_id, state, all_chunks)
     state.indexed_files.extend(unique_sources)
+    _save_index_state_to_disk(session_id, state)
     logger.info("index_wiki_url: complete, added %d chunk(s)", len(new_chunks))
     return len(new_chunks)
 
@@ -244,9 +320,11 @@ def remove_file(session_id: str, filename: str) -> None:
     if not state.by_source:
         state.chain = None
         state.faiss_store = None
+        _remove_index_state_from_disk(session_id)
         return
 
     all_chunks = [c for docs in state.by_source.values() for c in docs]
     state.faiss_store = build_merged_faiss(all_chunks, embedding_model())
     _rebuild_chain(session_id, state, all_chunks)
+    _save_index_state_to_disk(session_id, state)
     logger.info("remove_file: rebuilt index after removing %s (%d chunks remain)", filename, len(all_chunks))

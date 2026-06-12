@@ -103,7 +103,7 @@ def _format_tagged_context(docs: list[Document]) -> str:
         kind = "IMAGE" if meta.get("source_type") == "image" else "TEXT"
         title = (meta.get("title") or "").strip()
         if title:
-            url = meta.get("remote_url") or meta.get("source") or ""
+            url = (meta.get("remote_url") or "").strip()
             tag = f"[WIKI: {title}{' | ' + url if url else ''} | {kind}]"
         else:
             source = meta.get("source", "?")
@@ -241,12 +241,13 @@ def build_rag_chain(
         return docs
 
     qa_system_prompt = (
-        "Answer using only the context provided. Do not hallucinate. "
-        "Each context chunk is tagged with either [FILE: filename | page N | TYPE] "
-        "or [WIKI: page title | url | TYPE]. "
-        "When the user asks about a specific page, use the chunks from that page. "
-        "If the requested page has no content in the context, say so explicitly. "
-        "Cite the file and page number, or the wiki page title and its url, in your answer. "
+        "Answer using only the context provided below. Do not hallucinate. "
+        "Every context chunk is tagged with a source — either "
+        "[FILE: filename | page N | TYPE] or [WIKI: page title | url | TYPE]. "
+        "You MUST start your answer with the source where the information was found. "
+        "Format: **Source:** filename_or_page_title. Then write your answer. "
+        "If multiple chunks come from different sources, list them all. "
+        "If the answer is not in the context, say so and name the closest source you checked. "
         "When the user asks to list, enumerate, or extract items (such as tickets, "
         "action items, issues, IDs, or rows), reproduce EVERY matching item found in "
         "the context verbatim and in full — do NOT summarize, merge, or omit any of "
@@ -257,7 +258,6 @@ def build_rag_chain(
     qa_prompt = ChatPromptTemplate.from_messages([
         ("system", qa_system_prompt),
         MessagesPlaceholder("chat_history"),
-        ("system", "Use the following retrieved context to answer the question. If the answer is not contained in the context, say that you do not know."),
         ("system", "CONTEXT:\n{context}"),
         ("human", "{question}"),
     ])

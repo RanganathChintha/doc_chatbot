@@ -26,12 +26,16 @@ const Message = memo(function Message({ message }) {
             {showSources && (
               <ul className="sources-list">
                 {message.sources.map((s, i) => {
-                  const fileName = (s.source || 'unknown').split(/[\\/]/).pop();
+                  const label = s.title || (s.source || 'unknown').split(/[\\/]/).pop();
                   return (
                     <li key={i} className="source-item">
                       <div className="source-head">
                         <span className="source-tag">{(s.source_type || '?').toUpperCase()}</span>
-                        <span className="source-name">{fileName}</span>
+                        {s.url ? (
+                          <a className="source-name" href={s.url} target="_blank" rel="noopener noreferrer">{label}</a>
+                        ) : (
+                          <span className="source-name">{label}</span>
+                        )}
                         {s.page != null && <span className="source-page">p.{s.page}</span>}
                       </div>
                       <div className="source-snippet">{s.snippet}{s.snippet?.length === 300 ? '…' : ''}</div>

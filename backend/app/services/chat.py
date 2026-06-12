@@ -23,17 +23,22 @@ def _sse(payload: dict) -> str:
 
 
 def _format_docs(docs: list) -> list[dict]:
-    return [
-        {
-            "source": d.metadata.get("source", ""),
-            "source_type": d.metadata.get("source_type", ""),
-            "title": d.metadata.get("title", ""),
-            "url": d.metadata.get("remote_url", ""),
-            "page": d.metadata.get("page"),
+    result = []
+    for d in docs:
+        meta = d.metadata
+        url = (meta.get("remote_url") or "").strip()
+        source_type = meta.get("source_type", "")
+        if not url and source_type == "wiki":
+            logger.debug("Wiki chunk missing remote_url: source=%s title=%s", meta.get("source"), meta.get("title"))
+        result.append({
+            "source": meta.get("source", ""),
+            "source_type": source_type,
+            "title": meta.get("title", ""),
+            "url": url,
+            "page": meta.get("page"),
             "snippet": d.page_content[:300],
-        }
-        for d in docs
-    ]
+        })
+    return result
 
 
 async def stream_chat(session_id: str, message: str) -> AsyncIterator[str]:

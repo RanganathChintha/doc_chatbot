@@ -260,15 +260,17 @@ def _make_page_dict_rest(
 ) -> dict[str, Any]:
     page_id = node.get("id")
     page_path = node.get("path", "") or ""
+    source_label = f"Azure Wiki - {project}/{wiki_id}{page_path or (f'/{page_id}' if page_id is not None else '')}"
     return {
         "id": page_id,
         "path": page_path,
         "title": _path_to_title(page_path),
         "content": "",
-        "source": f"Azure Wiki - {project}/{wiki_id}{page_path or f'/{page_id}'}",
+        "source": source_label,
         "source_type": "wiki",
         "remote_url": node.get("remoteUrl", "")
-        or f"https://dev.azure.com/{org}/{project}/_wiki/wikis/{wiki_id}/{page_id}",
+        or (f"https://dev.azure.com/{org}/{project}/_wiki/wikis/{wiki_id}/{page_id}"
+            if page_id is not None else ""),
         "depth": depth,
         "char_count": 0,
     }
@@ -395,7 +397,7 @@ def _discover_pages(
     page content. Uses ?recursionLevel=full to get the entire
     subtree in a single API call.
 
-    Tries 3 strategies in order:
+    Tries 2 strategies in order:
 
     ┌─────────────────────────────────────────────────────────────┐
     │ Strategy 1 — Fetch by page ID → get exact path → tree fetch │
@@ -410,11 +412,6 @@ def _discover_pages(
     │   GET /pages?path=/&recursionLevel=full                     │
     │     → entire wiki tree                                      │
     │   _find_node_by_id() → extract subtree at target node      │
-    │                                                             │
-    │ Strategy 3 — Common path format variations                  │
-    │                                                             │
-    │   Try "/Page Name", "/Page-Name", "/page-name" etc.        │
-    │   GET /pages?path={variant}&recursionLevel=full             │
     └─────────────────────────────────────────────────────────────┘
     """
 
@@ -497,44 +494,6 @@ def _discover_pages(
 
     except Exception as exc:
         logger.warning("[DISCOVER] Strategy 2 failed: %s", exc)
-
-    # ── Strategy 3: Try common path format variations ─────────────
-    # Last resort when both ID-based lookups fail (e.g. permissions
-    # block /pages/{id} but allow /pages?path=...).
-    logger.debug("[DISCOVER] Strategy 3: trying path format variations")
-    _PATH_VARIANTS = [
-        "/Digital Commerce OPS",
-        "/Digital-Commerce-OPS",
-        "/Digital_Commerce_OPS",
-        "/digital-commerce-ops",
-        "/DigitalCommerceOPS",
-    ]
-    for variant in _PATH_VARIANTS:
-        try:
-            var_resp = session.get(
-                base,
-                params={
-                    "path":           variant,
-                    "recursionLevel": "full",
-                    "includeContent": "false",
-                    "api-version":    ver,
-                },
-                timeout=60,
-            )
-            if var_resp.status_code != 200:
-                continue
-            var_data = _safe_json(var_resp, f"DISCOVER-VAR:{variant}")
-            if var_data:
-                pages = _flatten_tree(var_data, org, project, wiki_id)
-                if pages:
-                    logger.info(
-                        "[DISCOVER] ✅ Strategy 3 succeeded with '%s' — %d child page(s)",
-                        variant, len(pages),
-                    )
-                    _log_page_tree(pages)
-                    return pages
-        except Exception as exc:
-            logger.warning("[DISCOVER] Strategy 3 variant '%s' failed: %s", variant, exc)
 
     logger.error(
         "[DISCOVER] ❌ All strategies failed for page ID %d. "

@@ -569,6 +569,13 @@ button {
   font-family: 'JetBrains Mono', Consolas, monospace;
   font-size: 12px;
 }
+a.source-name {
+  color: var(--primary);
+  text-decoration: none;
+}
+a.source-name:hover {
+  text-decoration: underline;
+}
 .source-page { color: var(--text-muted); font-size: 11px; }
 .source-snippet {
   color: var(--text-muted);
