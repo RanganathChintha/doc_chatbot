@@ -4,7 +4,7 @@ web pages into chunked Documents for indexing."""
 
 import logging
 import os
-from app.ingestion.azure_wiki_fetcher import fetch_wiki_pages_from_url
+from app.ingestion.crawler import fetch_pages_from_url
 from app.loaders.pdf_loader import load_pdf_text, extract_images_from_pdf
 from app.loaders.image_loader import load_image
 from app.loaders.tabular_loader import load_csv, load_excel
@@ -66,7 +66,7 @@ def load_and_chunk_wiki_url(pat: str, wiki_url: str):
     page becomes one Document before splitting.
     """
     logger.info("load_and_chunk_wiki_url: fetching wiki pages...")
-    pages = fetch_wiki_pages_from_url(pat=pat, wiki_url=wiki_url)
+    pages = fetch_pages_from_url(url=wiki_url, pat=pat)
     logger.info("load_and_chunk_wiki_url: fetched %d page(s)", len(pages))
 
     documents = []
