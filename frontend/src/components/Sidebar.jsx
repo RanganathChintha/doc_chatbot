@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { thumbnailUrl } from '../api.js';
+import { ChatIcon, EditIcon, TrashIcon, UploadIcon, MoonIcon, SunIcon } from './Icons.jsx';
 
 function groupByTime(convs) {
   const now = Date.now();
@@ -29,13 +30,10 @@ const WIKI_PREFIX = 'Azure Wiki - ';
 const isUrl = (name) => /^https?:\/\//i.test(name);
 const humanize = (seg) => seg.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-// Turn a raw indexed-source string into a readable title + a muted subtitle.
-// Wiki sources look like "Azure Wiki - <project>/<wikiId>/<path…>", which is
-// unreadable as-is, so we surface just the page title and its section path.
 function parseDocName(name) {
   if (name.startsWith(WIKI_PREFIX)) {
     const segs = name.slice(WIKI_PREFIX.length).split('/').filter(Boolean);
-    const pathSegs = segs.slice(2); // drop <project> and <wikiId>
+    const pathSegs = segs.slice(2);
     const leaf = pathSegs.length ? pathSegs[pathSegs.length - 1] : segs[segs.length - 1] || 'Page';
     const crumb = pathSegs.slice(0, -1).map(humanize).join(' › ');
     return { kind: 'wiki', title: humanize(leaf), sub: crumb || 'Azure DevOps Wiki' };
@@ -102,12 +100,25 @@ function DocThumbnail({ sessionId, name, kind }) {
   );
 }
 
+function DocSkeleton() {
+  return (
+    <div className="doc-skeleton doc-skeleton-pulse">
+      <div className="doc-skeleton-thumb" />
+      <div className="doc-skeleton-lines">
+        <div className="doc-skeleton-line" />
+        <div className="doc-skeleton-line" />
+      </div>
+    </div>
+  );
+}
+
 export default function Sidebar({
   conversations,
   activeId,
   sessionId,
   indexedFiles,
   uploading,
+  dark,
   onNewChat,
   onSelectChat,
   onDeleteChat,
@@ -117,6 +128,7 @@ export default function Sidebar({
   onIngestWiki,
   onClearFiles,
   onDeleteFile,
+  onToggleDark,
 }) {
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState(null);
@@ -162,6 +174,13 @@ export default function Sidebar({
     setEditingText('');
   };
 
+  const onConvKeyDown = (e, c) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onSelectChat(c.id);
+    }
+  };
+
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -192,12 +211,15 @@ export default function Sidebar({
             <div key={label} className="conv-group">
               {label !== 'Today' && <div className="group-label">{label}</div>}
               {items.map((c) => (
-                <div
+                <button
                   key={c.id}
                   className={`conv-item ${c.id === activeId ? 'active' : ''}`}
                   onClick={() => onSelectChat(c.id)}
+                  onKeyDown={(e) => onConvKeyDown(e, c)}
+                  aria-label={c.title}
+                  aria-current={c.id === activeId ? 'true' : undefined}
                 >
-                  <span className="conv-icon" aria-hidden>💬</span>
+                  <span className="conv-icon"><ChatIcon /></span>
                   {editingId === c.id ? (
                     <input
                       autoFocus
@@ -206,6 +228,7 @@ export default function Sidebar({
                       onChange={(e) => setEditingText(e.target.value)}
                       onBlur={() => commitEdit(c.id)}
                       onKeyDown={(e) => {
+                        e.stopPropagation();
                         if (e.key === 'Enter') commitEdit(c.id);
                         if (e.key === 'Escape') {
                           setEditingId(null);
@@ -219,26 +242,31 @@ export default function Sidebar({
                   <span className="conv-actions">
                     <button
                       className="icon-btn"
-                      title="Rename"
+                      aria-label="Rename"
                       onClick={(e) => { e.stopPropagation(); startEdit(c); }}
                     >
-                      ✎
+                      <EditIcon />
                     </button>
                     <button
                       className="icon-btn"
-                      title="Delete"
+                      aria-label="Delete conversation"
                       onClick={(e) => { e.stopPropagation(); onDeleteChat(c.id); }}
                     >
-                      🗑
+                      <TrashIcon />
                     </button>
                   </span>
-                </div>
+                </button>
               ))}
             </div>
           ),
         )}
         {filtered.length === 0 && <div className="empty-state">No conversations match.</div>}
       </div>
+
+      <button className="dark-toggle" onClick={onToggleDark} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}>
+        {dark ? <SunIcon /> : <MoonIcon />}
+        {dark ? 'Light mode' : 'Dark mode'}
+      </button>
 
       <div className="docs-section">
         <div className="docs-head">
@@ -252,7 +280,7 @@ export default function Sidebar({
           onClick={() => fileRef.current?.click()}
           disabled={uploading}
         >
-          {uploading ? 'Indexing…' : '⬆ Upload files'}
+          <UploadIcon /> {uploading ? 'Indexing…' : 'Upload files'}
         </button>
         <input
           ref={fileRef}
@@ -287,6 +315,7 @@ export default function Sidebar({
           </button>
         </form>
         <div className="docs-list">
+          {uploading && <DocSkeleton />}
           {indexedFiles.map((name) => {
             const info = parseDocName(name);
             return (
@@ -298,15 +327,15 @@ export default function Sidebar({
                 </div>
                 <button
                   className="doc-del"
-                  title="Remove"
+                  aria-label={`Remove ${name}`}
                   onClick={() => onDeleteFile(name)}
                 >
-                  ×
+                  &times;
                 </button>
               </div>
             );
           })}
-          {indexedFiles.length === 0 && (
+          {indexedFiles.length === 0 && !uploading && (
             <div className="docs-empty">No documents indexed yet.</div>
           )}
         </div>

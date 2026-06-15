@@ -116,6 +116,7 @@ def _clean_markdown(text: str) -> str:
     """Strip images, HTML comments, raw HTML tags and extra blank lines."""
     text = re.sub(r"!\[.*?\]\(.*?\)", "", text)
     text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+    text = re.sub(r'@<([^>\s]+)>', r'@\1', text)
     text = re.sub(r"<[^>]+>", "", text)
     text = re.sub(r"^[-*_]{3,}\s*$", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n{3,}", "\n\n", text)

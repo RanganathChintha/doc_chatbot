@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { SendIcon, StopIcon } from './Icons.jsx';
 
 export default function InputBox({ disabled, streaming, onSend, onStop, placeholder }) {
   const [value, setValue] = useState('');
@@ -37,15 +38,17 @@ export default function InputBox({ disabled, streaming, onSend, onStop, placehol
         onKeyDown={onKeyDown}
       />
       {streaming ? (
-        <button className="send-btn stop" onClick={onStop} title="Stop">■</button>
+        <button className="send-btn stop" onClick={onStop} aria-label="Stop generating">
+          <StopIcon />
+        </button>
       ) : (
         <button
           className="send-btn"
           onClick={submit}
           disabled={disabled || !value.trim()}
-          title="Send (Enter)"
+          aria-label="Send message"
         >
-          ➤
+          <SendIcon />
         </button>
       )}
     </div>

@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { StarIcon } from './Icons.jsx';
 
 const Message = memo(function Message({ message }) {
   const isUser = message.role === 'user';
@@ -8,7 +9,7 @@ const Message = memo(function Message({ message }) {
 
   return (
     <div className={`msg-row ${isUser ? 'user' : 'assistant'}`}>
-      <div className="msg-avatar">{isUser ? 'U' : '✦'}</div>
+      <div className="msg-avatar">{isUser ? 'U' : <StarIcon />}</div>
       <div className="msg-body">
         {!isUser && <div className="msg-label">DocPilot</div>}
         <div className="msg-content">
@@ -17,6 +18,7 @@ const Message = memo(function Message({ message }) {
           ) : (
             <span className="typing-dot">●</span>
           )}
+          {message.stopped && <div className="msg-stopped">— Stopped —</div>}
         </div>
         {!isUser && message.sources && message.sources.length > 0 && (
           <div className="msg-sources">
@@ -38,7 +40,7 @@ const Message = memo(function Message({ message }) {
                         )}
                         {s.page != null && <span className="source-page">p.{s.page}</span>}
                       </div>
-                      <div className="source-snippet">{s.snippet}{s.snippet?.length === 300 ? '…' : ''}</div>
+                      <div className="source-snippet">{s.snippet}{s.truncated ? '…' : ''}</div>
                     </li>
                   );
                 })}

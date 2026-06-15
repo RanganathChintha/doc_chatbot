@@ -41,9 +41,14 @@ _ALLOWED_ORIGINS = os.getenv(
 ).split(",")
 
 
+def _sanitize(session_id: str) -> str:
+    """Sanitize session id so it can't escape UPLOAD_DIR."""
+    return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in session_id)
+
+
 def _session_dir(session_id: str) -> Path:
     """Per-session upload directory. Sanitize the id so it can't escape UPLOAD_DIR."""
-    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in session_id)
+    safe = _sanitize(session_id)
     if not safe:
         raise HTTPException(status_code=400, detail="Invalid session_id.")
     d = UPLOAD_DIR / safe
@@ -118,7 +123,7 @@ async def _eviction_loop() -> None:
 @app.get("/thumbnail")
 async def file_thumbnail(session_id: str, filename: str):
     """Return a cached JPEG thumbnail for a PDF (first page) or an image file."""
-    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in session_id)
+    safe = _sanitize(session_id)
     file_path = UPLOAD_DIR / safe / Path(filename).name
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -156,13 +161,13 @@ async def file_thumbnail(session_id: str, filename: str):
 @app.delete("/file")
 async def delete_single_file(session_id: str, filename: str):
     """Remove one file from a session's index and delete it from disk."""
-    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in session_id)
-    (UPLOAD_DIR / safe / Path(filename).name).unlink(missing_ok=True)
+    safe = _sanitize(session_id)
     try:
         await asyncio.to_thread(remove_file, session_id, filename)
     except Exception as exc:
         logger.exception("Failed to remove %s from session %s", filename, session_id)
         raise HTTPException(status_code=500, detail=f"Removal failed: {exc}")
+    (UPLOAD_DIR / safe / Path(filename).name).unlink(missing_ok=True)
     return {"ok": True, "indexed_files": get_state(session_id).indexed_files}
 
 
@@ -232,9 +237,7 @@ async def ingest_wiki(req: WikiIngestRequest):
 @app.delete("/files")
 def clear_files(session_id: str):
     """Remove a single session's uploaded files, index, and cache artifacts."""
-    dest_dir = UPLOAD_DIR / "".join(
-        ch if ch.isalnum() or ch in "-_" else "_" for ch in session_id
-    )
+    dest_dir = UPLOAD_DIR / _sanitize(session_id)
     shutil.rmtree(dest_dir, ignore_errors=True)
     bm25_path = Path(_bm25_cache_file(session_id))
     bm25_path.unlink(missing_ok=True)
@@ -259,7 +262,7 @@ async def chat(req: ChatRequest):
             status_code=400, detail="No documents indexed for this chat yet."
         )
     # Refresh last-accessed so active chat sessions aren't swept by startup cleanup.
-    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in req.session_id)
+    safe = _sanitize(req.session_id)
     marker = UPLOAD_DIR / safe / ".last_accessed"
     if marker.parent.exists():
         marker.touch()

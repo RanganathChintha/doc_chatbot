@@ -30,13 +30,15 @@ def _format_docs(docs: list) -> list[dict]:
         source_type = meta.get("source_type", "")
         if not url and source_type == "wiki":
             logger.debug("Wiki chunk missing remote_url: source=%s title=%s", meta.get("source"), meta.get("title"))
+        snippet = d.page_content[:300]
         result.append({
             "source": meta.get("source", ""),
             "source_type": source_type,
             "title": meta.get("title", ""),
             "url": url,
             "page": meta.get("page"),
-            "snippet": d.page_content[:300],
+            "snippet": snippet,
+            "truncated": len(d.page_content) > 300,
         })
     return result
 

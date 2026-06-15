@@ -3,6 +3,7 @@
 Hybrid retriever combining semantic FAISS search with BM25 keyword matching.
 """
 
+import hashlib
 import logging
 import os
 import pickle
@@ -162,7 +163,16 @@ def _bm25_cache_file(cache_key: str | None) -> str:
 def _bm25_signature(chunks: list[Document]) -> int:
     """Fingerprint of the full corpus — hashes all chunks so any edit is detected."""
     content = "|".join(c.page_content[:64] for c in chunks)
-    return hash((len(chunks), content))
+    return _deterministic_hash((len(chunks), content))
+
+
+def _deterministic_hash(obj: tuple) -> int:
+    """Deterministic hash that returns the same value across interpreter restarts.
+    Python's built-in hash() is salted with PYTHONHASHSEED (randomized per process),
+    so we use hashlib.md5 instead.
+    """
+    h = hashlib.md5(str(obj).encode("utf-8"))
+    return int(h.hexdigest(), 16)
 
 
 def _load_or_build_bm25(chunks: list[Document], cache_key: str | None = None) -> BM25Retriever:

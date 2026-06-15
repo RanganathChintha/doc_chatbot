@@ -1,5 +1,7 @@
 # rag/rag_chain.py
 
+from __future__ import annotations
+
 import logging
 import os
 import re

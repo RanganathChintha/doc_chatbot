@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import ChatPane from './components/ChatPane.jsx';
 import InputBox from './components/InputBox.jsx';
+import Toast from './components/Toast.jsx';
 import { chatStream, listFiles, resetSession, uploadFiles, clearFiles, deleteFile, ingestWiki } from './api.js';
 
 const STORAGE_KEY = 'doc_chatbot.conversations.v1';
+const DARK_KEY = 'doc_chatbot.dark';
 
 function newConversation() {
   return {
@@ -12,8 +14,8 @@ function newConversation() {
     title: 'New chat',
     createdAt: Date.now(),
     updatedAt: Date.now(),
-    messages: [], // {role, content, sources?}
-    files: [], // filenames indexed for THIS chat only
+    messages: [],
+    files: [],
   };
 }
 
@@ -41,7 +43,10 @@ export default function App() {
   });
   const [uploading, setUploading] = useState(false);
   const [streaming, setStreaming] = useState(false);
-  const [error, setError] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [dark, setDark] = useState(() => {
+    try { return localStorage.getItem(DARK_KEY) === 'true'; } catch { return false; }
+  });
   const abortRef = useRef(null);
 
   const active = conversations.find((c) => c.id === activeId) ?? conversations[0];
@@ -51,22 +56,28 @@ export default function App() {
     saveConversations(conversations);
   }, [conversations]);
 
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark);
+    try { localStorage.setItem(DARK_KEY, dark ? 'true' : ''); } catch {}
+  }, [dark]);
+
   const updateConversation = useCallback((id, patch) => {
     setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch, updatedAt: Date.now() } : c)));
   }, []);
 
-  // Set a chat's file list without bumping updatedAt (refreshes shouldn't reorder).
   const setConversationFiles = useCallback((id, files) => {
     setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, files } : c)));
   }, []);
 
-  // Reconcile the active chat's file list with the backend's source of truth.
   useEffect(() => {
     if (!activeId) return;
     listFiles(activeId)
       .then((d) => setConversationFiles(activeId, d.files || []))
       .catch(() => {});
   }, [activeId, setConversationFiles]);
+
+  const showToast = (message, type = 'error') => setToast({ message, type });
+  const dismissToast = () => setToast(null);
 
   const onNewChat = () => {
     const c = newConversation();
@@ -77,6 +88,7 @@ export default function App() {
   const onSelectChat = (id) => setActiveId(id);
 
   const onDeleteChat = (id) => {
+    if (!confirm('Delete this conversation?')) return;
     setConversations((prev) => {
       const next = prev.filter((c) => c.id !== id);
       if (next.length === 0) {
@@ -87,7 +99,6 @@ export default function App() {
       if (id === activeId) setActiveId(next[0].id);
       return next;
     });
-    // Tear down this chat's server-side state: uploaded files + index, then history.
     clearFiles(id).catch(() => {});
     resetSession(id).catch(() => {});
   };
@@ -104,12 +115,13 @@ export default function App() {
   const onUpload = async (files) => {
     const chatId = active.id;
     setUploading(true);
-    setError(null);
     try {
       const res = await uploadFiles(chatId, files);
       setConversationFiles(chatId, res.indexed_files || []);
+      const count = res.new_chunks ?? 0;
+      showToast(`Indexed ${count} chunk${count !== 1 ? 's' : ''} from ${files.length} file${files.length !== 1 ? 's' : ''}`, 'success');
     } catch (e) {
-      setError(String(e.message || e));
+      showToast(String(e.message || e));
     } finally {
       setUploading(false);
     }
@@ -118,12 +130,13 @@ export default function App() {
   const onIngestWiki = async ({ wikiUrl, pat }) => {
     const chatId = active.id;
     setUploading(true);
-    setError(null);
     try {
       const res = await ingestWiki(chatId, wikiUrl, pat);
       setConversationFiles(chatId, res.indexed_files || []);
+      const count = res.new_chunks ?? 0;
+      showToast(`Indexed ${count} chunk${count !== 1 ? 's' : ''} from wiki`, 'success');
     } catch (e) {
-      setError(String(e.message || e));
+      showToast(String(e.message || e));
     } finally {
       setUploading(false);
     }
@@ -135,34 +148,31 @@ export default function App() {
     try {
       await clearFiles(chatId);
       setConversationFiles(chatId, []);
+      showToast('All documents removed', 'success');
     } catch (e) {
-      setError(String(e.message || e));
+      showToast(String(e.message || e));
     }
   };
 
   const onDeleteFile = async (filename) => {
+    if (!confirm(`Remove "${filename}"?`)) return;
     const chatId = active.id;
     try {
       const res = await deleteFile(chatId, filename);
       setConversationFiles(chatId, res.indexed_files || []);
+      showToast('File removed', 'success');
     } catch (e) {
-      setError(String(e.message || e));
+      showToast(String(e.message || e));
     }
   };
 
   const onSend = async (text) => {
     const trimmed = text.trim();
     if (!trimmed || streaming) return;
-    if (indexedFiles.length === 0) {
-      setError('Upload at least one document before chatting.');
-      return;
-    }
 
-    setError(null);
     const userMsg = { id: crypto.randomUUID(), role: 'user', content: trimmed };
     const assistantMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', sources: [] };
 
-    // Snapshot active conversation; auto-title from first user message.
     const nextMessages = [...active.messages, userMsg, assistantMsg];
     const patch = { messages: nextMessages };
     if (active.messages.length === 0) patch.title = trimmed.slice(0, 40);
@@ -186,10 +196,12 @@ export default function App() {
         }
       }
     } catch (e) {
-      if (e.name !== 'AbortError') {
+      if (e.name === 'AbortError') {
+        assistantMsg.stopped = true;
+      } else {
         assistantMsg.content = assistantMsg.content || `⚠️ ${e.message || e}`;
-        updateConversation(active.id, { messages: [...nextMessages.slice(0, -1), { ...assistantMsg }] });
       }
+      updateConversation(active.id, { messages: [...nextMessages.slice(0, -1), { ...assistantMsg }] });
     } finally {
       setStreaming(false);
       abortRef.current = null;
@@ -199,6 +211,7 @@ export default function App() {
   const onStop = () => abortRef.current?.abort();
 
   return (
+    <>
     <div className="app">
       <Sidebar
         conversations={conversations}
@@ -206,6 +219,7 @@ export default function App() {
         sessionId={active?.id}
         indexedFiles={indexedFiles}
         uploading={uploading}
+        dark={dark}
         onNewChat={onNewChat}
         onSelectChat={onSelectChat}
         onDeleteChat={onDeleteChat}
@@ -215,24 +229,30 @@ export default function App() {
         onIngestWiki={onIngestWiki}
         onClearFiles={onClearFiles}
         onDeleteFile={onDeleteFile}
+        onToggleDark={() => setDark((d) => !d)}
       />
       <main className="main-pane">
         <div className="main-inner">
           <ChatPane conversation={active} />
-          {error && <div className="error-banner">{error}</div>}
           <InputBox
-            disabled={uploading}
+            disabled={uploading || indexedFiles.length === 0}
             streaming={streaming}
             onSend={onSend}
             onStop={onStop}
             placeholder={
               indexedFiles.length === 0
                 ? 'Upload a document on the left to start chatting…'
-                : "What's in your mind?"
+                : "What's on your mind?"
             }
           />
         </div>
       </main>
     </div>
+    {toast && (
+      <div className="toast-container">
+        <Toast key={toast.message} message={toast.message} type={toast.type} onClose={dismissToast} />
+      </div>
+    )}
+    </>
   );
 }

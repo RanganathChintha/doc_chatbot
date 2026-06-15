@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 from openai import OpenAI, APITimeoutError
 from langchain_core.documents import Document
@@ -189,7 +189,7 @@ def _call_vlm(image: Image.Image, source: str) -> str | None:
         result_str = _ensure_str(result)
         logger.debug("VLM response received for %s: %s", source, result_str[:200] if result_str else None)
         return result_str
-    except (APITimeoutError, FuturesTimeoutError) as e:
+    except APITimeoutError as e:
         logger.error("VLM API timeout for %s (taking >50s): %s", source, e)
         return None
     except Exception as exc:
