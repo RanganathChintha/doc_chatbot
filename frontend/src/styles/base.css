@@ -28,7 +28,83 @@ button {
   overflow: hidden;
 }
 
+/* Mobile top bar (hamburger) — hidden on desktop */
+.mobile-topbar { display: none; }
+.menu-btn {
+  background: none;
+  border: none;
+  color: var(--text);
+  padding: 6px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+}
+.menu-btn:hover { background: var(--surface-hover); }
+.mobile-brand { font-weight: 700; color: var(--primary); letter-spacing: 0.5px; }
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 90;
+  animation: fade-in 0.2s ease-out;
+}
+
+/* Drag & drop overlay */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(75, 64, 197, 0.12);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+  animation: fade-in 0.15s ease-out;
+}
+.drop-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px 56px;
+  border-radius: 18px;
+  border: 2px dashed var(--primary);
+  background: var(--surface);
+  color: var(--primary);
+  font-weight: 600;
+  font-size: 15px;
+  box-shadow: var(--shadow);
+}
+.drop-card svg { width: 32px; height: 32px; }
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
 @media (max-width: 720px) {
-  .sidebar { width: 240px; }
   .main-inner { padding: 14px 14px; }
+
+  .mobile-topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--pane-bg);
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 100;
+    width: 280px !important; /* drawer ignores the resized width */
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.25);
+  }
+  .sidebar.open { transform: translateX(0); }
+  .sidebar-close { display: flex; }
+  .sidebar-resizer { display: none; }
 }

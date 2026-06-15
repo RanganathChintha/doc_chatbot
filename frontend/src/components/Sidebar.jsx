@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { thumbnailUrl } from '../api.js';
-import { ChatIcon, EditIcon, TrashIcon, UploadIcon, MoonIcon, SunIcon } from './Icons.jsx';
+import { ChatIcon, EditIcon, TrashIcon, UploadIcon, MoonIcon, SunIcon, CloseIcon, ChevronDownIcon } from './Icons.jsx';
 
 function groupByTime(convs) {
   const now = Date.now();
@@ -26,6 +26,11 @@ const FILE_TYPE_STYLES = {
 
 const THUMB_EXTS = new Set(['pdf', 'png', 'jpg', 'jpeg', 'bmp', 'tiff']);
 const WIKI_PREFIX = 'Azure Wiki - ';
+
+const WIDTH_KEY = 'doc_chatbot.sidebarWidth';
+const MIN_WIDTH = 220;
+const MAX_WIDTH = 520;
+const DEFAULT_WIDTH = 280;
 
 const isUrl = (name) => /^https?:\/\//i.test(name);
 const humanize = (seg) => seg.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -113,6 +118,7 @@ function DocSkeleton() {
 }
 
 export default function Sidebar({
+  className = '',
   conversations,
   activeId,
   sessionId,
@@ -129,13 +135,58 @@ export default function Sidebar({
   onClearFiles,
   onDeleteFile,
   onToggleDark,
+  onClose,
 }) {
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editingText, setEditingText] = useState('');
   const [wikiUrl, setWikiUrl] = useState('');
   const [wikiPat, setWikiPat] = useState('');
+  const [docsOpen, setDocsOpen] = useState(true);
+  const [docFilter, setDocFilter] = useState('');
   const fileRef = useRef(null);
+
+  // ── Resizable width ──────────────────────────────────────────────
+  const [width, setWidth] = useState(() => {
+    const saved = parseInt(localStorage.getItem(WIDTH_KEY), 10);
+    return saved >= MIN_WIDTH && saved <= MAX_WIDTH ? saved : DEFAULT_WIDTH;
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem(WIDTH_KEY, String(width)); } catch {}
+  }, [width]);
+
+  const onResizeMove = useCallback((e) => {
+    setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, e.clientX)));
+  }, []);
+
+  const stopResize = useCallback(() => {
+    document.body.classList.remove('resizing-x');
+    window.removeEventListener('mousemove', onResizeMove);
+    window.removeEventListener('mouseup', stopResize);
+  }, [onResizeMove]);
+
+  const startResize = useCallback((e) => {
+    e.preventDefault();
+    document.body.classList.add('resizing-x');
+    window.addEventListener('mousemove', onResizeMove);
+    window.addEventListener('mouseup', stopResize);
+  }, [onResizeMove, stopResize]);
+
+  useEffect(() => stopResize, [stopResize]); // cleanup listeners on unmount
+
+  const filteredDocs = useMemo(() => {
+    const q = docFilter.trim().toLowerCase();
+    if (!q) return indexedFiles;
+    return indexedFiles.filter((name) => {
+      const info = parseDocName(name);
+      return (
+        name.toLowerCase().includes(q) ||
+        info.title.toLowerCase().includes(q) ||
+        info.sub.toLowerCase().includes(q)
+      );
+    });
+  }, [indexedFiles, docFilter]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return conversations;
@@ -175,6 +226,7 @@ export default function Sidebar({
   };
 
   const onConvKeyDown = (e, c) => {
+    if (e.target !== e.currentTarget) return; // ignore keys from inner buttons/input
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       onSelectChat(c.id);
@@ -182,9 +234,22 @@ export default function Sidebar({
   };
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${className}`} style={{ '--sidebar-width': `${width}px` }}>
       <div className="sidebar-header">
         <div className="brand">DocPilot</div>
+        <div className="sidebar-header-actions">
+          <button
+            className="header-icon-btn"
+            onClick={onToggleDark}
+            aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={dark ? 'Light mode' : 'Dark mode'}
+          >
+            {dark ? <SunIcon /> : <MoonIcon />}
+          </button>
+          <button className="sidebar-close" onClick={onClose} aria-label="Close menu">
+            <CloseIcon />
+          </button>
+        </div>
       </div>
 
       <button className="new-chat-btn" onClick={onNewChat}>
@@ -211,8 +276,10 @@ export default function Sidebar({
             <div key={label} className="conv-group">
               {label !== 'Today' && <div className="group-label">{label}</div>}
               {items.map((c) => (
-                <button
+                <div
                   key={c.id}
+                  role="button"
+                  tabIndex={0}
                   className={`conv-item ${c.id === activeId ? 'active' : ''}`}
                   onClick={() => onSelectChat(c.id)}
                   onKeyDown={(e) => onConvKeyDown(e, c)}
@@ -255,7 +322,7 @@ export default function Sidebar({
                       <TrashIcon />
                     </button>
                   </span>
-                </button>
+                </div>
               ))}
             </div>
           ),
@@ -263,14 +330,17 @@ export default function Sidebar({
         {filtered.length === 0 && <div className="empty-state">No conversations match.</div>}
       </div>
 
-      <button className="dark-toggle" onClick={onToggleDark} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}>
-        {dark ? <SunIcon /> : <MoonIcon />}
-        {dark ? 'Light mode' : 'Dark mode'}
-      </button>
-
       <div className="docs-section">
         <div className="docs-head">
-          <span>Documents</span>
+          <button
+            className="docs-toggle"
+            onClick={() => setDocsOpen((v) => !v)}
+            aria-expanded={docsOpen}
+          >
+            <span className={`docs-chevron ${docsOpen ? 'open' : ''}`}><ChevronDownIcon /></span>
+            <span>Documents</span>
+            {indexedFiles.length > 0 && <span className="docs-count">{indexedFiles.length}</span>}
+          </button>
           {indexedFiles.length > 0 && (
             <button className="link-btn" onClick={onClearFiles}>Clear all</button>
           )}
@@ -314,32 +384,55 @@ export default function Sidebar({
             {uploading ? 'Indexing...' : 'Fetch pages'}
           </button>
         </form>
-        <div className="docs-list">
-          {uploading && <DocSkeleton />}
-          {indexedFiles.map((name) => {
-            const info = parseDocName(name);
-            return (
-              <div className="doc-item" key={name}>
-                <DocThumbnail sessionId={sessionId} name={name} kind={info.kind} />
-                <div className="doc-meta">
-                  <span className="doc-title" title={name}>{info.title}</span>
-                  <span className="doc-sub" title={info.sub}>{info.sub}</span>
+        {indexedFiles.length > 6 && docsOpen && (
+          <input
+            className="docs-filter"
+            placeholder="Filter documents…"
+            value={docFilter}
+            onChange={(e) => setDocFilter(e.target.value)}
+          />
+        )}
+        {docsOpen && (
+          <div className="docs-list">
+            {uploading && <DocSkeleton />}
+            {filteredDocs.map((name) => {
+              const info = parseDocName(name);
+              return (
+                <div className="doc-item" key={name}>
+                  <DocThumbnail sessionId={sessionId} name={name} kind={info.kind} />
+                  <div className="doc-meta">
+                    <span className="doc-title" title={name}>{info.title}</span>
+                    <span className="doc-sub" title={info.sub}>{info.sub}</span>
+                  </div>
+                  <button
+                    className="doc-del"
+                    aria-label={`Remove ${name}`}
+                    onClick={() => onDeleteFile(name)}
+                  >
+                    &times;
+                  </button>
                 </div>
-                <button
-                  className="doc-del"
-                  aria-label={`Remove ${name}`}
-                  onClick={() => onDeleteFile(name)}
-                >
-                  &times;
-                </button>
-              </div>
-            );
-          })}
-          {indexedFiles.length === 0 && !uploading && (
-            <div className="docs-empty">No documents indexed yet.</div>
-          )}
-        </div>
+              );
+            })}
+            {indexedFiles.length === 0 && !uploading && (
+              <div className="docs-empty">No documents indexed yet.</div>
+            )}
+            {indexedFiles.length > 0 && filteredDocs.length === 0 && (
+              <div className="docs-empty">No documents match “{docFilter}”.</div>
+            )}
+          </div>
+        )}
       </div>
+
+      <div
+        className="sidebar-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        title="Drag to resize · double-click to reset"
+        onMouseDown={startResize}
+        onDoubleClick={() => setWidth(DEFAULT_WIDTH)}
+      />
     </aside>
   );
 }

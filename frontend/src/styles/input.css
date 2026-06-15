@@ -1,3 +1,4 @@
+.input-wrap { margin-top: 10px; }
 .input-box {
   display: flex;
   align-items: flex-end;
@@ -7,9 +8,33 @@
   border-radius: 24px;
   padding: 8px 8px 8px 18px;
   box-shadow: var(--shadow);
-  margin-top: 10px;
   transition: background 0.2s, border-color 0.2s;
 }
+.input-box.is-disabled { opacity: 0.85; }
+.input-box:focus-within { border-color: var(--primary); }
+
+.input-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px 0;
+  min-height: 18px;
+}
+.input-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.input-counter {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.input-counter.over { color: var(--danger-text); font-weight: 700; }
 .input-textarea {
   flex: 1;
   border: none;

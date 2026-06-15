@@ -1,6 +1,7 @@
 .sidebar {
-  width: 280px;
+  width: var(--sidebar-width, 280px);
   flex-shrink: 0;
+  position: relative;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--border);
   display: flex;
@@ -10,13 +11,61 @@
   transition: background 0.2s, border-color 0.2s;
 }
 
-.sidebar-header { padding: 4px 8px 8px; }
+/* Drag handle to resize the sidebar (desktop only) */
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 50;
+  background: transparent;
+  transition: background 0.15s;
+}
+.sidebar-resizer:hover,
+body.resizing-x .sidebar-resizer { background: var(--primary); opacity: 0.5; }
+body.resizing-x { cursor: col-resize; user-select: none; }
+body.resizing-x * { user-select: none !important; }
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 8px;
+}
 .brand {
   font-weight: 700;
   font-size: 16px;
   letter-spacing: 0.5px;
   color: var(--primary);
 }
+.sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.header-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 6px;
+  border-radius: 8px;
+  transition: background 0.15s, color 0.15s;
+}
+.header-icon-btn:hover { background: var(--surface-hover); color: var(--primary); }
+.sidebar-close {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 4px;
+  border-radius: 6px;
+}
+.sidebar-close:hover { background: var(--surface-hover); color: var(--text); }
 
 .new-chat-btn {
   width: 100%;
@@ -159,24 +208,6 @@
   text-align: center;
 }
 
-/* Dark mode toggle */
-.dark-toggle {
-  width: 100%;
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  padding: 9px 12px;
-  border-radius: 10px;
-  font-size: 13px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 4px;
-  transition: background 0.15s, color 0.15s;
-}
-.dark-toggle:hover { background: var(--surface-active); color: var(--text); }
-
 /* Documents section */
 .docs-section {
   border-top: 1px solid var(--border);
@@ -192,6 +223,55 @@
   color: var(--text-muted);
   font-weight: 600;
 }
+.docs-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.docs-toggle:hover { color: var(--text); }
+.docs-chevron {
+  display: flex;
+  align-items: center;
+  transition: transform 0.18s ease;
+  transform: rotate(-90deg);
+}
+.docs-chevron svg { width: 14px; height: 14px; }
+.docs-chevron.open { transform: rotate(0deg); }
+.docs-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--surface-active);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+.docs-filter {
+  width: 100%;
+  background: var(--surface-hover);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  outline: none;
+  color: var(--text);
+  margin-top: 8px;
+  transition: border-color 0.15s, background 0.2s;
+}
+.docs-filter:focus { background: var(--surface); border-color: var(--primary); }
+.docs-filter::placeholder { color: var(--text-muted); }
 .upload-btn {
   width: 100%;
   background: var(--surface-hover);
@@ -245,13 +325,16 @@
 .wiki-submit:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .docs-list {
-  max-height: 220px;
+  max-height: 240px;
   overflow-y: auto;
   margin-top: 8px;
+  padding-right: 2px;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
+.docs-list::-webkit-scrollbar { width: 6px; }
+.docs-list::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 3px; }
 
 .doc-item {
   display: flex;

@@ -10,6 +10,14 @@ from requests.auth import HTTPBasicAuth
 
 logger = logging.getLogger(__name__)
 
+# A bare identity GUID, e.g. 8D45F413-0DC2-6FB3-A535-D794A26C509B
+_GUID_RE = re.compile(
+    r"[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}"
+)
+# An Azure DevOps person @mention: @<GUID> in raw markdown, or @GUID once
+# the angle brackets have already been stripped.
+_MENTION_RE = re.compile(r"@<?(" + _GUID_RE.pattern + r")>?")
+
 # ══════════════════════════════════════════════════════════════════
 #  SESSION
 # ══════════════════════════════════════════════════════════════════
@@ -121,6 +129,82 @@ def _clean_markdown(text: str) -> str:
     text = re.sub(r"^[-*_]{3,}\s*$", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+# ══════════════════════════════════════════════════════════════════
+#  AZURE DEVOPS — IDENTITY (@MENTION) RESOLUTION
+# ══════════════════════════════════════════════════════════════════
+
+def _resolve_identities(
+    session: requests.Session,
+    org:     str,
+    ids:     set[str],
+) -> dict[str, str]:
+    """
+    Resolve a set of Azure DevOps identity GUIDs to display names.
+
+    Azure DevOps stores wiki @mentions as @<GUID> where GUID is the user's
+    identity id. The Identities API turns those ids into human names:
+
+      GET https://vssps.dev.azure.com/{org}/_apis/identities
+          ?identityIds={guid,guid,...}&api-version=7.1
+
+    Returns { guid_lower: display_name }. Never raises — on any failure the
+    affected GUIDs are simply left unresolved (the caller keeps the raw id).
+    Requires the PAT to have Identity (Read) scope.
+    """
+    resolved: dict[str, str] = {}
+    id_list = [i for i in ids if i]
+    if not id_list:
+        return resolved
+
+    url = f"https://vssps.dev.azure.com/{org}/_apis/identities"
+
+    # The API takes a comma-separated list; chunk to keep the URL sane.
+    for start in range(0, len(id_list), 100):
+        chunk = id_list[start:start + 100]
+        resp = _rest_get(
+            session, url,
+            params={"identityIds": ",".join(chunk), "api-version": "7.1"},
+            label="IDENTITY",
+        )
+        if resp is None:
+            continue
+        data = _safe_json(resp, "IDENTITY")
+        for item in data.get("value", []) if data else []:
+            if not isinstance(item, dict):
+                continue  # API returns null for unresolvable ids
+            gid  = (item.get("id") or "").lower()
+            name = (
+                item.get("providerDisplayName")
+                or item.get("customDisplayName")
+                or item.get("properties", {})
+                    .get("Account", {}).get("$value", "")
+                or item.get("properties", {})
+                    .get("Mail", {}).get("$value", "")
+            )
+            if gid and name:
+                resolved[gid] = name.strip()
+
+    logger.info(
+        "[AZURE-IDENTITY] Resolved %d/%d mentioned identit(y/ies).",
+        len(resolved), len(id_list),
+    )
+    return resolved
+
+def _collect_mention_ids(text: str) -> set[str]:
+    """Return the lower-cased identity GUIDs @mentioned in *text*."""
+    return {m.group(1).lower() for m in _MENTION_RE.finditer(text or "")}
+
+def _apply_mentions(text: str, id_map: dict[str, str]) -> str:
+    """Replace @<GUID> / @GUID mentions with @DisplayName where known."""
+    if not text:
+        return text
+
+    def _replace(match: re.Match) -> str:
+        name = id_map.get(match.group(1).lower())
+        return f"@{name}" if name else match.group(0)
+
+    return _MENTION_RE.sub(_replace, text)
 
 def _extract_html_text(html: str, page_url: str) -> tuple[str, str]:
     """
@@ -467,14 +551,26 @@ def _hydrate_azure_pages(
                 data    = _safe_json(resp, "HYDRATE-ID")
                 content = (data.get("content", "") or "") if data else ""
 
-        clean              = _clean_markdown(content)
-        clean              = _resolve_urls(clean, wiki_root)
-        page["content"]    = clean
-        page["char_count"] = len(clean)
+        page["_raw"] = content
         return page
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         pages = list(pool.map(_hydrate, pages))
+
+    # Resolve every @mention GUID across all pages in a single batched call,
+    # then substitute display names before cleaning/url-resolution.
+    mention_ids: set[str] = set()
+    for page in pages:
+        mention_ids |= _collect_mention_ids(page.get("_raw", ""))
+    id_map = _resolve_identities(session, org, mention_ids) if mention_ids else {}
+
+    for page in pages:
+        raw                = page.pop("_raw", "")
+        raw                = _apply_mentions(raw, id_map)
+        clean              = _clean_markdown(raw)
+        clean              = _resolve_urls(clean, wiki_root)
+        page["content"]    = clean
+        page["char_count"] = len(clean)
 
     with_content = sum(1 for p in pages if p.get("content"))
     logger.info(
