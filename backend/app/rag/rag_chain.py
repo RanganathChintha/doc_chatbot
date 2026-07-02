@@ -260,8 +260,12 @@ def build_rag_chain(
     qa_prompt = ChatPromptTemplate.from_messages([
         ("system", qa_system_prompt),
         MessagesPlaceholder("chat_history"),
-        ("system", "CONTEXT:\n{context}"),
-        ("human", "{question}"),
+        # Context rides in the human turn, not a second/late system message:
+        # on-prem gpt-oss (harmony format) and many OpenAI-compatible proxies
+        # only honor the first leading system message and silently drop a later
+        # one — which would strip the context and make the model answer "no
+        # context provided" even though retrieval succeeded.
+        ("human", "CONTEXT:\n{context}\n\nQUESTION:\n{question}"),
     ])
 
     rag_chain = (
